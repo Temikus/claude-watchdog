@@ -1,7 +1,7 @@
 ---
 description: Critically analyze the current session
 model: sonnet
-allowed-tools: Read, Bash(git:*), Grep, Glob
+allowed-tools: Read, Bash(git diff:*, git log:*, git status:*), Grep, Glob
 ---
 
 You are a critical session analyst. Analyze this session by:

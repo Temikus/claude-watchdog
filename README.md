@@ -86,9 +86,11 @@ Run a short session and end Claude's turn. You should see output like:
 
 Only when **all** of these are true — otherwise it exits silently and Claude stops normally:
 
+- `CLAUDE_WATCHDOG_DISABLED` is not set to `1`
+- No `.claude-watchdog-skip` file exists in the project root
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
-- Session has not already been analyzed once (marker file in `~/.claude/tmp/claude-watchdog/`)
-- Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_LINES` lines (default 10)
+- Session has not already been analyzed (marker in `~/.claude/tmp/claude-watchdog/`, auto-expires after 2 hours)
+- Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_TOOL_USES` tool calls (default 3)
 - Condensed transcript is non-empty after jq filtering
 - `jq` is installed
 
@@ -100,11 +102,19 @@ Set these environment variables in your shell profile or `~/.claude/settings.jso
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `CLAUDE_WATCHDOG_DISABLED` | `0` | Set to `1` to disable the hook globally |
 | `CLAUDE_WATCHDOG_LOG` | `~/.claude/logs/claude-watchdog.log` | Debug log path |
 | `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
-| `CLAUDE_WATCHDOG_MIN_LINES` | `10` | Skip sessions shorter than this |
-| `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (keeps the tail) |
+| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `3` | Skip sessions with fewer tool calls than this |
+| `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (weighted: 20% user messages, 80% recent context) |
 | `CLAUDE_WATCHDOG_TMP` | `~/.claude/tmp/claude-watchdog` | Private temp directory for marker and condensed files |
+| `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
+
+You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
+
+```bash
+touch .claude-watchdog-skip  # add to .gitignore if needed
+```
 
 ## On-demand analysis
 
@@ -120,11 +130,13 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 
 No data leaves your machine except through Claude Code's normal model calls.
 
+Analysis results are saved to `~/.claude/logs/claude-watchdog-analyses/` (capped at 20 most recent sessions) so you can review past post-mortems.
+
 ## Uninstall
 
 ```
 /plugin uninstall claude-watchdog
-/plugin marketplace remove claude-watchdog
+/plugin marketplace remove Temikus/claude-plugins
 ```
 
 Then optionally delete the log and temp files:
@@ -132,13 +144,15 @@ Then optionally delete the log and temp files:
 ```bash
 rm -f ~/.claude/logs/claude-watchdog.log
 rm -rf ~/.claude/tmp/claude-watchdog
+rm -rf ~/.claude/logs/claude-watchdog-analyses
 ```
 
 ## Development
 
 ```bash
 just lint    # validate JSON manifests and bash syntax
-just smoke   # run the hook against a synthetic Stop event
+just test    # run smoke tests
+just check   # lint + all tests
 ```
 
 See `justfile` for the full list.

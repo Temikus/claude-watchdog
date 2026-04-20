@@ -8,15 +8,22 @@ set -euo pipefail
 
 LOG_FILE="${CLAUDE_WATCHDOG_LOG:-$HOME/.claude/logs/claude-watchdog.log}"
 MAX_LINES="${CLAUDE_WATCHDOG_LOG_MAX_LINES:-1000}"
-MIN_TRANSCRIPT_LINES="${CLAUDE_WATCHDOG_MIN_LINES:-10}"
+MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-3}"
 CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-51200}"
 WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-$HOME/.claude/tmp/claude-watchdog}"
+ANALYSES_DIR="${CLAUDE_WATCHDOG_ANALYSES_DIR:-$HOME/.claude/logs/claude-watchdog-analyses}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$WATCHDOG_TMP" && chmod 700 "$WATCHDOG_TMP"
+mkdir -p "$ANALYSES_DIR"
 
-# Cleanup: remove marker and condensed files older than 24 hours
-find "$WATCHDOG_TMP" -maxdepth 1 -name 'claude-watchdog-*' -mtime +1 -delete 2>/dev/null || true
+# Cleanup: condensed/raw files older than 2 hours
+find "$WATCHDOG_TMP" -maxdepth 1 -type f -name 'claude-watchdog-*' -mmin +120 -delete 2>/dev/null || true
+# Cleanup: marker directories older than 2 hours (empty dirs from atomic mkdir)
+find "$WATCHDOG_TMP" -maxdepth 1 -type d -name 'claude-watchdog-*' -mmin +120 -exec rmdir {} + 2>/dev/null || true
+
+# Keep only 20 most recent analyses
+ls -t "$ANALYSES_DIR"/*.md 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 
 log() {
   echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >> "$LOG_FILE"
@@ -39,7 +46,13 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-input="$(cat)"
+# Per-project disable via environment variable
+if [ "${CLAUDE_WATCHDOG_DISABLED:-0}" = "1" ]; then
+  log "SKIP: disabled via CLAUDE_WATCHDOG_DISABLED"
+  exit 0
+fi
+
+input="$(head -c 65536)"
 
 session_id="$(echo "$input" | jq -r '.session_id')"
 transcript_path="$(echo "$input" | jq -r '.transcript_path')"
@@ -48,10 +61,16 @@ hook_cwd="$(echo "$input" | jq -r '.cwd')"
 # In practice the field may be absent/null — treat that as end_turn
 stop_reason="$(echo "$input" | jq -r '.stop_reason // "end_turn"')"
 
+# Validate session_id format (alphanumeric, hyphens, underscores only)
+if [[ ! "$session_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  log "SKIP: invalid session_id format"
+  exit 0
+fi
+
 # Log the full event JSON with content values truncated to 200 chars
 event_summary="$(echo "$input" | jq -c '
   walk(if type == "string" and length > 200 then .[:200] + "...[truncated]" else . end)
-' 2>/dev/null || echo "$input")"
+' 2>/dev/null || echo "${input:0:500}")"
 
 log "--- session=${session_id} stop_reason=${stop_reason} ---"
 log "event: ${event_summary}"
@@ -64,9 +83,16 @@ if [ "$stop_reason" != "end_turn" ]; then
   exit 0
 fi
 
+# Per-project disable via sentinel file
+if [ -n "$hook_cwd" ] && [ -f "${hook_cwd}/.claude-watchdog-skip" ]; then
+  log "SKIP: disabled via .claude-watchdog-skip in ${hook_cwd}"
+  exit 0
+fi
+
+# Atomic marker creation (mkdir is atomic: fails if already exists)
 MARKER="${WATCHDOG_TMP}/claude-watchdog-${session_id}"
-if [ -f "$MARKER" ]; then
-  log "SKIP: marker file exists (already analyzed this session)"
+if ! mkdir "$MARKER" 2>/dev/null; then
+  log "SKIP: marker exists (already analyzed or concurrent run)"
   exit 0
 fi
 
@@ -75,20 +101,22 @@ if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then
   exit 0
 fi
 
-line_count=$(wc -l < "$transcript_path")
-log "transcript lines: ${line_count}"
-if [ "$line_count" -lt "$MIN_TRANSCRIPT_LINES" ]; then
-  log "SKIP: transcript too short (${line_count} lines < ${MIN_TRANSCRIPT_LINES})"
+# Count tool_use events to filter out trivial sessions
+tool_use_count=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | .name' "$transcript_path" 2>/dev/null | wc -l | tr -d ' ')
+log "tool_use count: ${tool_use_count}"
+if [ "$tool_use_count" -lt "$MIN_TOOL_USES" ]; then
+  log "SKIP: too few tool uses (${tool_use_count} < ${MIN_TOOL_USES})"
   exit 0
 fi
 
 # --- Processing ---
 
 umask 077
-touch "$MARKER"
-log "marker created: ${MARKER}"
 
+RAW_FILE="${WATCHDOG_TMP}/claude-watchdog-raw-${session_id}.txt"
 CONDENSED_FILE="${WATCHDOG_TMP}/claude-watchdog-condensed-${session_id}.txt"
+
+# Hybrid extraction: structured for known types, catch-all fallback for unknown
 jq -r '
   if .type == "user" then
     if (.message.content | type) == "string" then
@@ -98,9 +126,9 @@ jq -r '
         if .type == "text" then "USER: " + .text
         elif .type == "tool_result" then
           "TOOL_RESULT: " + (
-            if (.content | type) == "string" then .content[:200]
+            if (.content | type) == "string" then .content[:500]
             elif (.content | type) == "array" then
-              ([.content[] | select(.type == "text") | .text] | join(" "))[:200]
+              ([.content[] | select(.type == "text") | .text] | join("\n"))[:500]
             else "(no content)" end
           ) + (if .is_error == true then " [ERROR]" else "" end)
         else empty end
@@ -108,24 +136,54 @@ jq -r '
   elif .type == "assistant" then
     .message.content[]? |
       if .type == "text" then "ASSISTANT: " + .text
+      elif .type == "thinking" then
+        "THINKING: " + .thinking[:300]
       elif .type == "tool_use" then
-        "TOOL_USE: " + .name + "(" + ((.input | tostring)[:200]) + ")"
+        "TOOL_USE: " + .name + "(" + ((.input | tostring)[:500]) + ")"
       else empty end
-  else empty end
-' "$transcript_path" 2>/dev/null | tail -c "$CONDENSED_MAX_BYTES" > "$CONDENSED_FILE"
+  else
+    "SYSTEM[" + (.type // "unknown") + "]: " + ((. | tostring)[:200])
+  end
+' "$transcript_path" 2>/dev/null > "$RAW_FILE"
+
+# Weighted extraction: prioritize USER messages over tool noise
+raw_size=$(wc -c < "$RAW_FILE" 2>/dev/null || echo 0)
+if [ "$raw_size" -le "$CONDENSED_MAX_BYTES" ]; then
+  # Fits within budget — keep everything in chronological order
+  mv "$RAW_FILE" "$CONDENSED_FILE"
+else
+  USER_BUDGET=$(( CONDENSED_MAX_BYTES / 5 ))
+  OTHER_BUDGET=$(( CONDENSED_MAX_BYTES * 4 / 5 ))
+  {
+    # All user messages (capped at 20% budget), preserving chronological order
+    (grep '^USER: ' "$RAW_FILE" || true) | head -c "$USER_BUDGET"
+    echo ""
+    echo "--- [above: user messages; below: recent tool calls and responses] ---"
+    echo ""
+    # Recent non-user content (last 80% of budget)
+    (grep -v '^USER: ' "$RAW_FILE" || true) | tail -c "$OTHER_BUDGET"
+  } > "$CONDENSED_FILE"
+  rm -f "$RAW_FILE"
+fi
 
 condensed_size=$(wc -c < "$CONDENSED_FILE" 2>/dev/null || echo 0)
 log "condensed file: ${CONDENSED_FILE} (${condensed_size} bytes)"
 
 if [ ! -s "$CONDENSED_FILE" ]; then
   log "SKIP: condensed transcript is empty (jq produced no output)"
-  rm -f "$MARKER"
+  rmdir "$MARKER" 2>/dev/null || true
   exit 0
 fi
 
 # --- Trigger analysis via exit 2 injection ---
 
+ANALYSIS_OUTPUT="${ANALYSES_DIR}/${session_id}.md"
 log "TRIGGER: injecting session-analyzer subagent request (exit 2)"
+
+# Sanitize paths: strip newlines to prevent prompt injection
+safe_condensed="${CONDENSED_FILE//$'\n'/}"
+safe_cwd="${hook_cwd//$'\n'/}"
+safe_output="${ANALYSIS_OUTPUT//$'\n'/}"
 
 cat >&2 <<EOF
 Please spawn a session-analyzer agent to critically analyze this session.
@@ -133,8 +191,8 @@ Please spawn a session-analyzer agent to critically analyze this session.
 Use the Agent tool with:
 - subagent_type: "session-analyzer"
 - model: "sonnet"
-- prompt: "Read and analyze the condensed session transcript at ${CONDENSED_FILE}. The working directory is ${hook_cwd}. Provide your critical analysis."
+- prompt: "Read and analyze the condensed session transcript at '${safe_condensed}'. The working directory is '${safe_cwd}'. Provide your critical analysis."
 
-Present the analysis to the user, then stop.
+Present the analysis to the user, then write it to '${safe_output}', then stop.
 EOF
 exit 2

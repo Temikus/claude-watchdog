@@ -6,7 +6,7 @@ description: >
   efficiency, code quality, and provides actionable recommendations. Used by the
   claude-watchdog Stop hook.
 model: sonnet
-tools: Read, Bash(git:*), Grep, Glob
+tools: Read, Bash(git diff:*, git log:*, git status:*), Grep, Glob
 color: yellow
 ---
 
