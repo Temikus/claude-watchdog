@@ -6,7 +6,6 @@ default:
 # Validate JSON manifests with jq
 lint:
     jq empty .claude-plugin/plugin.json
-    jq empty .claude-plugin/marketplace.json
     jq empty hooks/hooks.json
     bash -n hooks/session-analysis.sh
 
@@ -29,8 +28,8 @@ smoke:
     cat "$tmpdir/log"
     rm -f "/tmp/claude-watchdog-${session_id}" "/tmp/claude-watchdog-condensed-${session_id}.txt"
 
-# Install locally into your Claude Code by registering this repo as a marketplace
-install-local:
+# Install instructions
+install-hint:
     @echo "In Claude Code, run:"
-    @echo "  /plugin marketplace add {{justfile_directory()}}"
-    @echo "  /plugin install claude-watchdog@claude-watchdog"
+    @echo "  /plugin marketplace add Temikus/claude-plugins"
+    @echo "  /plugin install claude-watchdog@temikus"

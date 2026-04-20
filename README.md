@@ -48,27 +48,14 @@ your constraint but didn't honor it.
 
 ## Install
 
-### Option A — from GitHub (recommended)
-
 In Claude Code:
 
 ```
-/plugin marketplace add Temikus/claude-watchdog
-/plugin install claude-watchdog@claude-watchdog
+/plugin marketplace add Temikus/claude-plugins
+/plugin install claude-watchdog@temikus
 ```
 
-### Option B — from a local clone
-
-```bash
-git clone https://github.com/Temikus/claude-watchdog.git ~/code/claude-watchdog
-```
-
-Then in Claude Code:
-
-```
-/plugin marketplace add ~/code/claude-watchdog
-/plugin install claude-watchdog@claude-watchdog
-```
+That adds my personal plugin marketplace (which also hosts any future plugins) and installs `claude-watchdog` from it.
 
 ### Verify it's working
 
