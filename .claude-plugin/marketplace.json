@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-watchdog",
+  "description": "Single-plugin marketplace for claude-watchdog — auto session post-mortems for Claude Code.",
+  "owner": {
+    "name": "Artem Yakimenko"
+  },
+  "plugins": [
+    {
+      "name": "claude-watchdog",
+      "description": "Auto-runs a critical session post-mortem when Claude Code stops.",
+      "source": ".",
+      "category": "productivity"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "description": "claude-watchdog — trigger a critical session post-mortem on Stop.",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-analysis.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

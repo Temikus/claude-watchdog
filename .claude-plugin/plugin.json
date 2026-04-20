@@ -1,0 +1,11 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "claude-watchdog",
+  "description": "Auto-runs a critical session post-mortem when Claude Code stops. Ships the analyze-session command, session-analyzer agent, and a Stop hook that triggers the review in-session (no external API calls).",
+  "version": "0.1.0",
+  "author": {
+    "name": "Artem Yakimenko"
+  },
+  "homepage": "https://github.com/Temikus/claude-watchdog",
+  "keywords": ["session", "analysis", "post-mortem", "hooks", "review"]
+}
