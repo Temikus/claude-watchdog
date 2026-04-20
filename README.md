@@ -87,7 +87,7 @@ Run a short session and end Claude's turn. You should see output like:
 Only when **all** of these are true — otherwise it exits silently and Claude stops normally:
 
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
-- Session has not already been analyzed once (marker file in `/tmp`)
+- Session has not already been analyzed once (marker file in `~/.claude/tmp/claude-watchdog/`)
 - Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_LINES` lines (default 10)
 - Condensed transcript is non-empty after jq filtering
 - `jq` is installed
@@ -104,6 +104,7 @@ Set these environment variables in your shell profile or `~/.claude/settings.jso
 | `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
 | `CLAUDE_WATCHDOG_MIN_LINES` | `10` | Skip sessions shorter than this |
 | `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (keeps the tail) |
+| `CLAUDE_WATCHDOG_TMP` | `~/.claude/tmp/claude-watchdog` | Private temp directory for marker and condensed files |
 
 ## On-demand analysis
 
@@ -113,7 +114,7 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 
 1. Claude Code fires the `Stop` hook when a turn ends.
 2. `session-analysis.sh` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
-3. It filters the JSONL transcript with `jq` down to just user + assistant text, keeps the last ~50 KB, and writes it to `/tmp/claude-watchdog-condensed-<session-id>.txt`.
+3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `~/.claude/tmp/claude-watchdog/claude-watchdog-condensed-<session-id>.txt` (owner-only permissions). Files older than 24 hours are cleaned up automatically.
 4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
 
@@ -126,7 +127,12 @@ No data leaves your machine except through Claude Code's normal model calls.
 /plugin marketplace remove claude-watchdog
 ```
 
-Then optionally delete the log at `~/.claude/logs/claude-watchdog.log`.
+Then optionally delete the log and temp files:
+
+```bash
+rm -f ~/.claude/logs/claude-watchdog.log
+rm -rf ~/.claude/tmp/claude-watchdog
+```
 
 ## Development
 

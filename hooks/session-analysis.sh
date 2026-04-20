@@ -10,8 +10,13 @@ LOG_FILE="${CLAUDE_WATCHDOG_LOG:-$HOME/.claude/logs/claude-watchdog.log}"
 MAX_LINES="${CLAUDE_WATCHDOG_LOG_MAX_LINES:-1000}"
 MIN_TRANSCRIPT_LINES="${CLAUDE_WATCHDOG_MIN_LINES:-10}"
 CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-51200}"
+WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-$HOME/.claude/tmp/claude-watchdog}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$WATCHDOG_TMP" && chmod 700 "$WATCHDOG_TMP"
+
+# Cleanup: remove marker and condensed files older than 24 hours
+find "$WATCHDOG_TMP" -maxdepth 1 -name 'claude-watchdog-*' -mtime +1 -delete 2>/dev/null || true
 
 log() {
   echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >> "$LOG_FILE"
@@ -59,7 +64,7 @@ if [ "$stop_reason" != "end_turn" ]; then
   exit 0
 fi
 
-MARKER="/tmp/claude-watchdog-${session_id}"
+MARKER="${WATCHDOG_TMP}/claude-watchdog-${session_id}"
 if [ -f "$MARKER" ]; then
   log "SKIP: marker file exists (already analyzed this session)"
   exit 0
@@ -79,19 +84,33 @@ fi
 
 # --- Processing ---
 
+umask 077
 touch "$MARKER"
 log "marker created: ${MARKER}"
 
-CONDENSED_FILE="/tmp/claude-watchdog-condensed-${session_id}.txt"
+CONDENSED_FILE="${WATCHDOG_TMP}/claude-watchdog-condensed-${session_id}.txt"
 jq -r '
   if .type == "user" then
     if (.message.content | type) == "string" then
       "USER: " + .message.content
     elif (.message.content | type) == "array" then
-      .message.content[] | select(.type == "text") | "USER: " + .text
+      .message.content[] |
+        if .type == "text" then "USER: " + .text
+        elif .type == "tool_result" then
+          "TOOL_RESULT: " + (
+            if (.content | type) == "string" then .content[:200]
+            elif (.content | type) == "array" then
+              ([.content[] | select(.type == "text") | .text] | join(" "))[:200]
+            else "(no content)" end
+          ) + (if .is_error == true then " [ERROR]" else "" end)
+        else empty end
     else empty end
   elif .type == "assistant" then
-    .message.content[]? | select(.type == "text") | "ASSISTANT: " + .text
+    .message.content[]? |
+      if .type == "text" then "ASSISTANT: " + .text
+      elif .type == "tool_use" then
+        "TOOL_USE: " + .name + "(" + ((.input | tostring)[:200]) + ")"
+      else empty end
   else empty end
 ' "$transcript_path" 2>/dev/null | tail -c "$CONDENSED_MAX_BYTES" > "$CONDENSED_FILE"
 

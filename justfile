@@ -26,7 +26,8 @@ smoke:
     echo "hook exit: $rc (expected 2)"
     echo "--- log ---"
     cat "$tmpdir/log"
-    rm -f "/tmp/claude-watchdog-${session_id}" "/tmp/claude-watchdog-condensed-${session_id}.txt"
+    rm -f "$HOME/.claude/tmp/claude-watchdog/claude-watchdog-${session_id}" \
+          "$HOME/.claude/tmp/claude-watchdog/claude-watchdog-condensed-${session_id}.txt"
 
 # Install instructions
 install-hint:
