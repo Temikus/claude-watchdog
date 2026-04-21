@@ -222,6 +222,24 @@ test-cursor:
     cleanup_session "fresh-$$"
     pass "ttl-cleanup"
 
+    # --- Test 9: malformed-cursor (bogus uuid / non-integer line is rejected, no shell injection) ---
+    sid9="cursor-t9-$$"
+    cleanup_session "$sid9"
+    t9_transcript="$TMPROOT/t9.jsonl"
+    mk_transcript "$t9_transcript" 1 3 OLDMARK
+    # Adversarial cursor: shell metacharacters in uuid, non-integer line number
+    printf 'evil; touch %s/pwned\nnot-a-number\n%s\n' "$TMPROOT" "$t9_transcript" > "$WATCHDOG_DIR/cursor-${sid9}.txt"
+    for i in 1 2 3; do
+      mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t9_transcript"
+      mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t9_transcript"
+    done
+    rc=$(run_hook "$sid9" "$t9_transcript")
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "malformed-cursor-exit" "expected 2 got $rc"; }
+    [ ! -f "$TMPROOT/pwned" ] || fail "malformed-cursor-injection" "shell injection succeeded: pwned file exists"
+    grep -q "CURSOR: malformed uuid" "$TEST_LOG" || fail "malformed-cursor-log" "no malformed-uuid log"
+    cleanup_session "$sid9"
+    pass "malformed-cursor"
+
     echo "--- all cursor tests passed ---"
 
 # Run all tests

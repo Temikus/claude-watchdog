@@ -111,14 +111,21 @@ if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then
   exit 0
 fi
 
-# Read cursor if present; validate stored transcript path
+# Read cursor if present; validate stored transcript path and integer fields
 CURSOR_UUID=""
 CURSOR_LINENUM=0
 DELTA_START=1
 if [ -f "$CURSOR_FILE" ]; then
   CURSOR_UUID=$(sed -n '1p' "$CURSOR_FILE" 2>/dev/null || true)
-  CURSOR_LINENUM=$(sed -n '2p' "$CURSOR_FILE" 2>/dev/null || echo 0)
+  raw_linenum=$(sed -n '2p' "$CURSOR_FILE" 2>/dev/null || true)
   CURSOR_TRANSCRIPT=$(sed -n '3p' "$CURSOR_FILE" 2>/dev/null || true)
+  if [[ ! "$CURSOR_UUID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    log "CURSOR: malformed uuid, ignoring cursor"
+    CURSOR_UUID=""
+  fi
+  if [[ "$raw_linenum" =~ ^[0-9]+$ ]]; then
+    CURSOR_LINENUM="$raw_linenum"
+  fi
   if [ -n "$CURSOR_TRANSCRIPT" ] && [ ! -f "$CURSOR_TRANSCRIPT" ]; then
     log "CURSOR: stale transcript path, ignoring cursor"
     CURSOR_UUID=""
@@ -128,8 +135,14 @@ fi
 
 if [ -n "$CURSOR_UUID" ]; then
   slice_out=$(node "$CURSOR_SLICE" slice "$transcript_path" "$CURSOR_UUID" "$CURSOR_LINENUM" 2>>"$LOG_FILE" || echo "DELTA_START=1")
-  # shellcheck disable=SC1090
-  eval "$slice_out"
+  # Extract integer after DELTA_START=; fall back to 1 if the node script misbehaves
+  ds_value="${slice_out#*DELTA_START=}"
+  ds_value="${ds_value%%[!0-9]*}"
+  if [[ "$ds_value" =~ ^[0-9]+$ ]] && [ "$ds_value" -ge 1 ]; then
+    DELTA_START="$ds_value"
+  else
+    DELTA_START=1
+  fi
   log "CURSOR: uuid=${CURSOR_UUID} hint=${CURSOR_LINENUM} -> delta starts at line ${DELTA_START}"
 fi
 
@@ -233,12 +246,15 @@ EOF
 # Advance the cursor to the last uuid of the delta we just analyzed
 lastuuid_out=$(node "$CURSOR_SLICE" last-uuid "$DELTA_FILE" 2>>"$LOG_FILE" || true)
 if [ -n "$lastuuid_out" ]; then
-  # shellcheck disable=SC1090
-  eval "$lastuuid_out"
-  if [ -n "${UUID:-}" ]; then
-    ABS_LINE=$(( DELTA_START - 1 + ${REL_LINE:-0} ))
-    printf '%s\n%s\n%s\n' "$UUID" "$ABS_LINE" "$transcript_path" > "$CURSOR_FILE"
-    log "CURSOR: updated to uuid=${UUID} line=${ABS_LINE}"
+  # Parse key=value lines with awk (not eval) and validate types before use
+  new_uuid=$(printf '%s\n' "$lastuuid_out" | awk -F= '$1=="UUID" {print $2; exit}')
+  rel_line=$(printf '%s\n' "$lastuuid_out" | awk -F= '$1=="REL_LINE" {print $2; exit}')
+  if [[ "$new_uuid" =~ ^[A-Za-z0-9_-]+$ ]] && [[ "$rel_line" =~ ^[0-9]+$ ]]; then
+    ABS_LINE=$(( DELTA_START - 1 + rel_line ))
+    printf '%s\n%s\n%s\n' "$new_uuid" "$ABS_LINE" "$transcript_path" > "$CURSOR_FILE"
+    log "CURSOR: updated to uuid=${new_uuid} line=${ABS_LINE}"
+  else
+    log "CURSOR: invalid last-uuid output, cursor unchanged"
   fi
 fi
 
