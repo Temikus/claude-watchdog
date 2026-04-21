@@ -137,8 +137,9 @@ fi
 # Cooldown: skip if a trigger fired recently for this session.
 # The cursor file's mtime is the last-trigger timestamp (updated only on trigger).
 if [ "$COOLDOWN_SECONDS" -gt 0 ] && [ -f "$CURSOR_FILE" ]; then
-  # BSD stat (macOS) uses -f %m; GNU stat uses -c %Y. Try BSD first, fall back to GNU.
-  cursor_mtime=$(stat -f %m "$CURSOR_FILE" 2>/dev/null || stat -c %Y "$CURSOR_FILE" 2>/dev/null || echo 0)
+  # GNU stat uses -c %Y (epoch); BSD/macOS uses -f %m. Try GNU first — on GNU,
+  # `-f %m` would succeed but return the mount point string, not an epoch.
+  cursor_mtime=$(stat -c %Y "$CURSOR_FILE" 2>/dev/null || stat -f %m "$CURSOR_FILE" 2>/dev/null || echo 0)
   now_epoch=$(date +%s)
   if [[ "$cursor_mtime" =~ ^[0-9]+$ ]] && [ "$cursor_mtime" -gt 0 ]; then
     age=$(( now_epoch - cursor_mtime ))
