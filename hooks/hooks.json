@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/persist-analysis.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

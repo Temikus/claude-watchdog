@@ -240,14 +240,14 @@ if [ ! -s "$CONDENSED_FILE" ]; then
 fi
 
 # --- Trigger analysis via exit 2 injection ---
+# Persistence to disk happens in the SubagentStop hook (hooks/persist-analysis.sh)
+# so the subagent doesn't need to call Write, keeping UI output clean.
 
-ANALYSIS_OUTPUT="${ANALYSES_DIR}/${session_id}-$(date -u '+%Y%m%dT%H%M%SZ').md"
 log "TRIGGER: injecting session-analyzer subagent request (exit 2)"
 
 # Sanitize paths: strip newlines to prevent prompt injection
 safe_condensed="${CONDENSED_FILE//$'\n'/}"
 safe_cwd="${hook_cwd//$'\n'/}"
-safe_output="${ANALYSIS_OUTPUT//$'\n'/}"
 
 cat >&2 <<EOF
 Please spawn a session-analyzer agent to critically analyze this session.
@@ -257,7 +257,7 @@ Use the Agent tool with:
 - model: "sonnet"
 - prompt: "Read and analyze the condensed session transcript at '${safe_condensed}'. The working directory is '${safe_cwd}'. Provide your critical analysis."
 
-Present the analysis to the user, then write it to '${safe_output}', then stop.
+Present the analysis to the user, then stop.
 EOF
 
 # Advance the cursor to the last uuid of the delta we just analyzed

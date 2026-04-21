@@ -72,6 +72,7 @@ Run a short session and end Claude's turn. You should see output like:
 | Component | Path | Purpose |
 | --- | --- | --- |
 | Stop hook | `hooks/session-analysis.sh` | Preprocesses the transcript, triggers the analyzer |
+| SubagentStop hook | `hooks/persist-analysis.sh` | Persists the analyzer's output to disk (no UI noise) |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
 | Slash command | `commands/analyze-session.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
@@ -129,6 +130,7 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). Files older than 2 hours are cleaned up automatically.
 4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
+6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.sh` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
 
 No data leaves your machine except through Claude Code's normal model calls.
 

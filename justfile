@@ -8,6 +8,7 @@ lint:
     jq empty .claude-plugin/plugin.json
     jq empty hooks/hooks.json
     bash -n hooks/session-analysis.sh
+    bash -n hooks/persist-analysis.sh
 
 # Smoke-test the hook with a synthetic Stop event
 smoke:
@@ -270,8 +271,60 @@ test-cursor:
 
     echo "--- all cursor tests passed ---"
 
+# Test the SubagentStop persistence hook
+test-persist:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TMPROOT=$(mktemp -d)
+    trap 'rm -rf "$TMPROOT"' EXIT
+    export CLAUDE_WATCHDOG_ANALYSES_DIR="$TMPROOT/analyses"
+    export CLAUDE_WATCHDOG_LOG="$TMPROOT/log"
+
+    pass() { echo "PASS: $1"; }
+    fail() { echo "FAIL: $1 - $2" >&2; exit 1; }
+
+    # --- Test 1: session-analyzer payload writes a file ---
+    sid1="persist-t1-$$"
+    payload=$(jq -n --arg sid "$sid1" --arg msg $'### Goals\nSome analysis.' \
+      '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:$msg}')
+    echo "$payload" | bash hooks/persist-analysis.sh
+    out=$(ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid1}-*.md 2>/dev/null | head -1)
+    [ -n "$out" ] || fail "analyzer-writes" "no analysis file written"
+    grep -q "### Goals" "$out" || fail "analyzer-content" "file missing content"
+    pass "analyzer-writes"
+
+    # --- Test 2: other subagent types are ignored ---
+    sid2="persist-t2-$$"
+    payload=$(jq -n --arg sid "$sid2" --arg msg "ignored" \
+      '{session_id:$sid, agent_type:"general-purpose", last_assistant_message:$msg}')
+    echo "$payload" | bash hooks/persist-analysis.sh
+    if ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid2}-*.md >/dev/null 2>&1; then
+      fail "other-agent-ignored" "wrote file for non-analyzer subagent"
+    fi
+    pass "other-agent-ignored"
+
+    # --- Test 3: empty message skips without error ---
+    sid3="persist-t3-$$"
+    payload=$(jq -n --arg sid "$sid3" \
+      '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:""}')
+    echo "$payload" | bash hooks/persist-analysis.sh
+    if ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid3}-*.md >/dev/null 2>&1; then
+      fail "empty-message" "wrote file for empty message"
+    fi
+    grep -q "empty last_assistant_message" "$CLAUDE_WATCHDOG_LOG" || fail "empty-log" "no empty log"
+    pass "empty-message"
+
+    # --- Test 4: invalid session_id is rejected ---
+    payload=$(jq -n --arg msg "x" \
+      '{session_id:"evil; rm -rf /", agent_type:"session-analyzer", last_assistant_message:$msg}')
+    echo "$payload" | bash hooks/persist-analysis.sh
+    grep -q "invalid session_id" "$CLAUDE_WATCHDOG_LOG" || fail "bad-sid" "no invalid-sid log"
+    pass "invalid-session-id"
+
+    echo "--- all persist tests passed ---"
+
 # Run all tests
-test: smoke test-cursor
+test: smoke test-cursor test-persist
 
 # Lint + all tests
 check: lint test
