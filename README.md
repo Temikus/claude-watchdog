@@ -89,8 +89,8 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - `CLAUDE_WATCHDOG_DISABLED` is not set to `1`
 - No `.claude-watchdog-skip` file exists in the project root
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
-- Session has not already been analyzed (marker in `~/.claude/tmp/claude-watchdog/`, auto-expires after 2 hours)
-- Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_TOOL_USES` tool calls (default 3)
+- Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
+- Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_TOOL_USES` tool calls in the unanalyzed delta (default 8)
 - Condensed transcript is non-empty after jq filtering
 - `jq` is installed
 
@@ -105,9 +105,9 @@ Set these environment variables in your shell profile or `~/.claude/settings.jso
 | `CLAUDE_WATCHDOG_DISABLED` | `0` | Set to `1` to disable the hook globally |
 | `CLAUDE_WATCHDOG_LOG` | `~/.claude/logs/claude-watchdog.log` | Debug log path |
 | `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
-| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `3` | Skip sessions with fewer tool calls than this |
+| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Skip turns whose delta has fewer tool calls than this (prevents review-storms on short back-and-forth edits) |
 | `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (weighted: 20% user messages, 80% recent context) |
-| `CLAUDE_WATCHDOG_TMP` | `~/.claude/tmp/claude-watchdog` | Private temp directory for marker and condensed files |
+| `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` when running as an installed plugin, otherwise `~/.claude/tmp/claude-watchdog` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
 
 You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
@@ -124,7 +124,7 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 
 1. Claude Code fires the `Stop` hook when a turn ends.
 2. `session-analysis.sh` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
-3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `~/.claude/tmp/claude-watchdog/claude-watchdog-condensed-<session-id>.txt` (owner-only permissions). Files older than 24 hours are cleaned up automatically.
+3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). Files older than 2 hours are cleaned up automatically.
 4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
 
@@ -139,12 +139,12 @@ Analysis results are saved to `~/.claude/logs/claude-watchdog-analyses/` (capped
 /plugin marketplace remove Temikus/claude-plugins
 ```
 
-Then optionally delete the log and temp files:
+`/plugin uninstall` clears `${CLAUDE_PLUGIN_DATA}` automatically. Optionally delete the log, analyses, and any pre-plugin-era temp files:
 
 ```bash
 rm -f ~/.claude/logs/claude-watchdog.log
-rm -rf ~/.claude/tmp/claude-watchdog
 rm -rf ~/.claude/logs/claude-watchdog-analyses
+rm -rf ~/.claude/tmp/claude-watchdog  # only exists on pre-0.4 installs or custom CLAUDE_WATCHDOG_TMP
 ```
 
 ## Development

@@ -8,19 +8,25 @@ set -euo pipefail
 
 LOG_FILE="${CLAUDE_WATCHDOG_LOG:-$HOME/.claude/logs/claude-watchdog.log}"
 MAX_LINES="${CLAUDE_WATCHDOG_LOG_MAX_LINES:-1000}"
-MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-3}"
+MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-8}"
 CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-51200}"
-WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-$HOME/.claude/tmp/claude-watchdog}"
+WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-${CLAUDE_PLUGIN_DATA:-$HOME/.claude/tmp/claude-watchdog}}"
+SESSIONS_DIR="$WATCHDOG_TMP/sessions"
 ANALYSES_DIR="${CLAUDE_WATCHDOG_ANALYSES_DIR:-$HOME/.claude/logs/claude-watchdog-analyses}"
+CURSOR_TTL_DAYS="${CLAUDE_WATCHDOG_CURSOR_TTL_DAYS:-7}"
+CURSOR_SLICE="${CLAUDE_WATCHDOG_CURSOR_SLICE:-$(dirname "$0")/cursor-slice.mjs}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$WATCHDOG_TMP" && chmod 700 "$WATCHDOG_TMP"
+mkdir -p "$SESSIONS_DIR" && chmod 700 "$SESSIONS_DIR"
 mkdir -p "$ANALYSES_DIR"
 
-# Cleanup: condensed/raw files older than 2 hours
-find "$WATCHDOG_TMP" -maxdepth 1 -type f -name 'claude-watchdog-*' -mmin +120 -delete 2>/dev/null || true
+# Cleanup: condensed/raw/delta files older than 2 hours
+find "$SESSIONS_DIR" -maxdepth 1 -type f \( -name 'condensed-*' -o -name 'raw-*' -o -name 'delta-*' \) -mmin +120 -delete 2>/dev/null || true
 # Cleanup: marker directories older than 2 hours (empty dirs from atomic mkdir)
-find "$WATCHDOG_TMP" -maxdepth 1 -type d -name 'claude-watchdog-*' -mmin +120 -exec rmdir {} + 2>/dev/null || true
+find "$SESSIONS_DIR" -mindepth 1 -maxdepth 1 -type d -mmin +120 -exec rmdir {} + 2>/dev/null || true
+# Cleanup: cursor files older than CURSOR_TTL_DAYS days
+find "$SESSIONS_DIR" -maxdepth 1 -type f -name 'cursor-*' -mtime "+${CURSOR_TTL_DAYS}" -delete 2>/dev/null || true
 
 # Keep only 20 most recent analyses
 ls -t "$ANALYSES_DIR"/*.md 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
@@ -89,23 +95,52 @@ if [ -n "$hook_cwd" ] && [ -f "${hook_cwd}/.claude-watchdog-skip" ]; then
   exit 0
 fi
 
-# Atomic marker creation (mkdir is atomic: fails if already exists)
-MARKER="${WATCHDOG_TMP}/claude-watchdog-${session_id}"
+# Short-lived lock (released on EXIT). Prevents concurrent runs for the same session.
+MARKER="${SESSIONS_DIR}/${session_id}"
+CURSOR_FILE="${SESSIONS_DIR}/cursor-${session_id}.txt"
+DELTA_FILE="${SESSIONS_DIR}/delta-${session_id}.tmp"
+
 if ! mkdir "$MARKER" 2>/dev/null; then
-  log "SKIP: marker exists (already analyzed or concurrent run)"
+  log "SKIP: concurrent run already in progress for ${session_id}"
   exit 0
 fi
+trap 'rmdir "$MARKER" 2>/dev/null || true; rm -f "$DELTA_FILE" 2>/dev/null || true' EXIT
 
 if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then
   log "SKIP: transcript not found at '${transcript_path}'"
   exit 0
 fi
 
-# Count tool_use events to filter out trivial sessions
-tool_use_count=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | .name' "$transcript_path" 2>/dev/null | wc -l | tr -d ' ')
-log "tool_use count: ${tool_use_count}"
+# Read cursor if present; validate stored transcript path
+CURSOR_UUID=""
+CURSOR_LINENUM=0
+DELTA_START=1
+if [ -f "$CURSOR_FILE" ]; then
+  CURSOR_UUID=$(sed -n '1p' "$CURSOR_FILE" 2>/dev/null || true)
+  CURSOR_LINENUM=$(sed -n '2p' "$CURSOR_FILE" 2>/dev/null || echo 0)
+  CURSOR_TRANSCRIPT=$(sed -n '3p' "$CURSOR_FILE" 2>/dev/null || true)
+  if [ -n "$CURSOR_TRANSCRIPT" ] && [ ! -f "$CURSOR_TRANSCRIPT" ]; then
+    log "CURSOR: stale transcript path, ignoring cursor"
+    CURSOR_UUID=""
+    CURSOR_LINENUM=0
+  fi
+fi
+
+if [ -n "$CURSOR_UUID" ]; then
+  slice_out=$(node "$CURSOR_SLICE" slice "$transcript_path" "$CURSOR_UUID" "$CURSOR_LINENUM" 2>>"$LOG_FILE" || echo "DELTA_START=1")
+  # shellcheck disable=SC1090
+  eval "$slice_out"
+  log "CURSOR: uuid=${CURSOR_UUID} hint=${CURSOR_LINENUM} -> delta starts at line ${DELTA_START}"
+fi
+
+# Build DELTA_FILE from the slice of transcript we haven't analyzed yet
+tail -n "+${DELTA_START}" "$transcript_path" > "$DELTA_FILE"
+
+# Count tool_use events in the delta (not the whole transcript) to filter trivial re-triggers
+tool_use_count=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | .name' "$DELTA_FILE" 2>/dev/null | wc -l | tr -d ' ')
+log "tool_use count (delta): ${tool_use_count}"
 if [ "$tool_use_count" -lt "$MIN_TOOL_USES" ]; then
-  log "SKIP: too few tool uses (${tool_use_count} < ${MIN_TOOL_USES})"
+  log "SKIP: delta too small (${tool_use_count} < ${MIN_TOOL_USES}), cursor unchanged"
   exit 0
 fi
 
@@ -113,8 +148,8 @@ fi
 
 umask 077
 
-RAW_FILE="${WATCHDOG_TMP}/claude-watchdog-raw-${session_id}.txt"
-CONDENSED_FILE="${WATCHDOG_TMP}/claude-watchdog-condensed-${session_id}.txt"
+RAW_FILE="${SESSIONS_DIR}/raw-${session_id}.txt"
+CONDENSED_FILE="${SESSIONS_DIR}/condensed-${session_id}.txt"
 
 # Hybrid extraction: structured for known types, catch-all fallback for unknown
 jq -r '
@@ -144,7 +179,7 @@ jq -r '
   else
     "SYSTEM[" + (.type // "unknown") + "]: " + ((. | tostring)[:200])
   end
-' "$transcript_path" 2>/dev/null > "$RAW_FILE"
+' "$DELTA_FILE" 2>/dev/null > "$RAW_FILE"
 
 # Weighted extraction: prioritize USER messages over tool noise
 raw_size=$(wc -c < "$RAW_FILE" 2>/dev/null || echo 0)
@@ -171,13 +206,12 @@ log "condensed file: ${CONDENSED_FILE} (${condensed_size} bytes)"
 
 if [ ! -s "$CONDENSED_FILE" ]; then
   log "SKIP: condensed transcript is empty (jq produced no output)"
-  rmdir "$MARKER" 2>/dev/null || true
   exit 0
 fi
 
 # --- Trigger analysis via exit 2 injection ---
 
-ANALYSIS_OUTPUT="${ANALYSES_DIR}/${session_id}.md"
+ANALYSIS_OUTPUT="${ANALYSES_DIR}/${session_id}-$(date -u '+%Y%m%dT%H%M%SZ').md"
 log "TRIGGER: injecting session-analyzer subagent request (exit 2)"
 
 # Sanitize paths: strip newlines to prevent prompt injection
@@ -195,4 +229,17 @@ Use the Agent tool with:
 
 Present the analysis to the user, then write it to '${safe_output}', then stop.
 EOF
+
+# Advance the cursor to the last uuid of the delta we just analyzed
+lastuuid_out=$(node "$CURSOR_SLICE" last-uuid "$DELTA_FILE" 2>>"$LOG_FILE" || true)
+if [ -n "$lastuuid_out" ]; then
+  # shellcheck disable=SC1090
+  eval "$lastuuid_out"
+  if [ -n "${UUID:-}" ]; then
+    ABS_LINE=$(( DELTA_START - 1 + ${REL_LINE:-0} ))
+    printf '%s\n%s\n%s\n' "$UUID" "$ABS_LINE" "$transcript_path" > "$CURSOR_FILE"
+    log "CURSOR: updated to uuid=${UUID} line=${ABS_LINE}"
+  fi
+fi
+
 exit 2
