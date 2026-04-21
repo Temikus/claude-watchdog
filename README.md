@@ -91,6 +91,7 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
 - Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
 - Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_TOOL_USES` tool calls in the unanalyzed delta (default 8)
+- At least `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` have elapsed since the last analysis for this session (default 600)
 - Condensed transcript is non-empty after jq filtering
 - `jq` is installed
 
@@ -106,6 +107,7 @@ Set these environment variables in your shell profile or `~/.claude/settings.jso
 | `CLAUDE_WATCHDOG_LOG` | `~/.claude/logs/claude-watchdog.log` | Debug log path |
 | `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
 | `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Skip turns whose delta has fewer tool calls than this (prevents review-storms on short back-and-forth edits) |
+| `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Minimum seconds between analyses for the same session. Set to `0` to disable |
 | `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (weighted: 20% user messages, 80% recent context) |
 | `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` when running as an installed plugin, otherwise `~/.claude/tmp/claude-watchdog` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |

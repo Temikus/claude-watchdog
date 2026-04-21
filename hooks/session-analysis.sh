@@ -15,6 +15,7 @@ SESSIONS_DIR="$WATCHDOG_TMP/sessions"
 ANALYSES_DIR="${CLAUDE_WATCHDOG_ANALYSES_DIR:-$HOME/.claude/logs/claude-watchdog-analyses}"
 CURSOR_TTL_DAYS="${CLAUDE_WATCHDOG_CURSOR_TTL_DAYS:-7}"
 CURSOR_SLICE="${CLAUDE_WATCHDOG_CURSOR_SLICE:-$(dirname "$0")/cursor-slice.mjs}"
+COOLDOWN_SECONDS="${CLAUDE_WATCHDOG_COOLDOWN_SECONDS:-600}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$WATCHDOG_TMP" && chmod 700 "$WATCHDOG_TMP"
@@ -130,6 +131,21 @@ if [ -f "$CURSOR_FILE" ]; then
     log "CURSOR: stale transcript path, ignoring cursor"
     CURSOR_UUID=""
     CURSOR_LINENUM=0
+  fi
+fi
+
+# Cooldown: skip if a trigger fired recently for this session.
+# The cursor file's mtime is the last-trigger timestamp (updated only on trigger).
+if [ "$COOLDOWN_SECONDS" -gt 0 ] && [ -f "$CURSOR_FILE" ]; then
+  # BSD stat (macOS) uses -f %m; GNU stat uses -c %Y. Try BSD first, fall back to GNU.
+  cursor_mtime=$(stat -f %m "$CURSOR_FILE" 2>/dev/null || stat -c %Y "$CURSOR_FILE" 2>/dev/null || echo 0)
+  now_epoch=$(date +%s)
+  if [[ "$cursor_mtime" =~ ^[0-9]+$ ]] && [ "$cursor_mtime" -gt 0 ]; then
+    age=$(( now_epoch - cursor_mtime ))
+    if [ "$age" -lt "$COOLDOWN_SECONDS" ]; then
+      log "SKIP: cooldown active (${age}s < ${COOLDOWN_SECONDS}s since last trigger)"
+      exit 0
+    fi
   fi
 fi
 

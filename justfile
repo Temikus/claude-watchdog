@@ -25,7 +25,7 @@ smoke:
     done
     payload=$(jq -n --arg sid "$session_id" --arg tp "$transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
-    echo "$payload" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 bash hooks/session-analysis.sh && rc=$? || rc=$?
+    echo "$payload" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh && rc=$? || rc=$?
     echo "hook exit: $rc (expected 2)"
     echo "--- log ---"
     cat "$tmpdir/log"
@@ -67,7 +67,7 @@ test-cursor:
       payload=$(jq -n --arg sid "$sid" --arg tp "$tp" --arg cwd "$PWD" \
         '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
       local rc=0
-      echo "$payload" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+      echo "$payload" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
       echo "$rc"
     }
 
@@ -239,6 +239,34 @@ test-cursor:
     grep -q "CURSOR: malformed uuid" "$TEST_LOG" || fail "malformed-cursor-log" "no malformed-uuid log"
     cleanup_session "$sid9"
     pass "malformed-cursor"
+
+    # --- Test 10: cooldown (second trigger within window is skipped) ---
+    sid10="cursor-t10-$$"
+    cleanup_session "$sid10"
+    t10_transcript="$TMPROOT/t10.jsonl"
+    mk_transcript "$t10_transcript" 1 5 OLD
+    payload10=$(jq -n --arg sid "$sid10" --arg tp "$t10_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    # First run: no cursor yet, should trigger
+    rc=0
+    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "cooldown-first-run" "expected 2 got $rc"; }
+    # Append enough new tool uses to clear MIN_TOOL_USES
+    for i in 1 2 3; do
+      mk_msg user "u-COOL-$i" "COOL user $i" >> "$t10_transcript"
+      mk_msg assistant "a-COOL-$i" "COOL assistant $i" >> "$t10_transcript"
+    done
+    # Second run: cursor mtime is fresh, cooldown=60s should skip
+    rc=0
+    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "cooldown-second-run" "expected 0 got $rc"; }
+    grep -q "SKIP: cooldown active" "$TEST_LOG" || fail "cooldown-log" "no cooldown log"
+    # Third run with cooldown=0 should trigger again, proving the gate is the only thing blocking
+    rc=0
+    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "cooldown-disabled" "expected 2 got $rc"; }
+    cleanup_session "$sid10"
+    pass "cooldown"
 
     echo "--- all cursor tests passed ---"
 
