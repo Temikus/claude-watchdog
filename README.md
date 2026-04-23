@@ -16,35 +16,19 @@ The analysis happens **in-session**, using your existing Claude Code credentials
 
 Long coding sessions drift. Claude will sometimes claim a task is done when it isn't, silently drop requirements, or agree too easily. claude-watchdog gives you a second pair of eyes on every session without you having to remember to ask.
 
-## Example output
+## Real examples this plugin caught
 
-```
-### Goals
-The stated goal was to rename `UserService` to `AccountService` across the
-codebase. The rename is complete in `src/` (23 files), but 4 test files in
-`tests/integration/` still reference the old name and were not updated.
-The migration file `migrations/0042_accounts.sql` was created but not run.
+> _Context7 **docs lookup was never completed**. I said "Let me confirm exact CLI syntax from Jamf docs" but the
+  resolve-library-id call only returned Jamf Protect (**wrong product**), and I proceeded without retrying or using WebFetch. This
+  violates the global context7.md rule._
 
-### Efficiency
-Two failed attempts to update `src/user_service.py` before noticing the
-file had already been renamed — Claude kept trying to edit a path that
-no longer existed. ~6 wasted tool calls.
+> _The claims that reason= is mandatory and that the URL scheme exists **were stated confidently but not doc-verified** — treat them as hypotheses until you test._
 
-### Quality
-The new `AccountService.create_account` method swallows exceptions with
-a bare `except:` — this was added mid-session and no test covers the
-error path.
+> _**Integration test still unexecuted. snapshotReader.test.ts has never actually run** — better-sqlite3 is absent from node_modules._
 
-### Compliance
-You asked for "no breaking changes to the public API" twice. The rename
-removes `UserService` entirely without an alias shim. Claude agreed to
-your constraint but didn't honor it.
+> _Live/snapshot path inconsistency. health.ts:401 still slices the overview to team.repos.slice(0, 3) on the live (non-snapshot) path. Now that snapshots return all repos, the two paths diverge — **users who bypass  the cache with ?fresh=1 see a smaller dataset than the snapshot they just replaced**. Either align the live path to return all repos, or document why the slice exists (likely: live scoring is expensive; 3 repos keeps the cold-path responsive)._
 
-### Recommendations
-1. Update the 4 test files in tests/integration/ before merging.
-2. Add a `UserService = AccountService` alias for one release.
-3. Replace the bare except in AccountService.create_account.
-```
+> _Goals: Neither achieved — **no branch was created, no code changed**._
 
 ## Install
 
