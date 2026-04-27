@@ -18,6 +18,9 @@ Long coding sessions drift. Claude will sometimes claim a task is done when it i
 
 ## Real examples this plugin caught
 
+> _**the go vet failures I dismissed as "pre-existing" are not pre-existing** —
+  openrouter_test.go:263 references FundsRemaining, which was deleted in the same working tree diff. Those are broken tests from the cost_limit migration, not noise._
+
 > _Context7 **docs lookup was never completed**. I said "Let me confirm exact CLI syntax from Jamf docs" but the
   resolve-library-id call only returned Jamf Protect (**wrong product**), and I proceeded without retrying or using WebFetch. This
   violates the global context7.md rule._
