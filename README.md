@@ -61,7 +61,7 @@ Run a short session and end Claude's turn. You should see output like:
 | Stop hook | `hooks/session-analysis.sh` | Preprocesses the transcript, triggers the analyzer |
 | SubagentStop hook | `hooks/persist-analysis.sh` | Persists the analyzer's output to disk (no UI noise) |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
-| Slash command | `commands/analyze-session.md` | `/analyze-session` for on-demand analysis mid-conversation |
+| Slash command | `skills/analyze-session/SKILL.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
 ## Requirements
 

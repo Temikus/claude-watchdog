@@ -1,6 +1,10 @@
 ---
+name: analyze-session
 description: Critically analyze the current session
+when_to_use: When the user wants a critical review of the current session's goals, efficiency, and code quality
+user-invocable: true
 model: sonnet
+effort: high
 allowed-tools: Read, Bash(git diff:*, git log:*, git status:*), Grep, Glob
 ---
 

@@ -6,6 +6,8 @@ description: >
   efficiency, code quality, and provides actionable recommendations. Used by the
   claude-watchdog Stop hook.
 model: sonnet
+effort: high
+maxTurns: 50
 tools: Read, Bash(git diff:*, git log:*, git status:*), Grep, Glob
 color: yellow
 ---

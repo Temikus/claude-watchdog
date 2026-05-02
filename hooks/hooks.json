@@ -15,7 +15,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "",
+        "matcher": "session-analyzer",
         "hooks": [
           {
             "type": "command",
