@@ -74,12 +74,12 @@ Run a short session and end Claude's turn. You should see output like:
 
 Only when **all** of these are true — otherwise it exits silently and Claude stops normally:
 
-- `CLAUDE_WATCHDOG_DISABLED` is not set to `1`
+- Watchdog is not disabled (via plugin config or `CLAUDE_WATCHDOG_DISABLED=1`)
 - No `.claude-watchdog-skip` file exists in the project root
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
 - Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
-- Transcript exists and has ≥ `CLAUDE_WATCHDOG_MIN_TOOL_USES` tool calls in the unanalyzed delta (default 8)
-- At least `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` have elapsed since the last analysis for this session (default 600)
+- Transcript exists and has ≥ configured minimum tool calls (default 8) in the unanalyzed delta
+- At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
 - Condensed transcript is non-empty after jq filtering
 - `jq` is installed
 
@@ -87,18 +87,41 @@ Every decision is logged to `~/.claude/logs/claude-watchdog.log`.
 
 ## Configuration
 
-Set these environment variables in your shell profile or `~/.claude/settings.json` `env` block:
+The three main settings are configured via the plugin's user config — Claude Code
+prompts for these values when you enable the plugin, and you can change them later
+with `/plugin configure claude-watchdog`:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| Disable watchdog | `false` | Set to `true` to disable automatic session analysis |
+| Minimum tool calls | `8` | Skip analysis if the session delta has fewer tool calls than this |
+| Cooldown (seconds) | `600` | Minimum seconds between analyses for the same session. Set to `0` to disable |
+
+### Environment variable overrides
+
+All user-config settings can also be overridden via environment variables, which
+take priority over the plugin config. Set these in your shell profile or
+`~/.claude/settings.json` `env` block:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CLAUDE_WATCHDOG_DISABLED` | `0` | Set to `1` to disable the hook globally |
+| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Override minimum tool calls threshold |
+| `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Override cooldown between analyses |
+
+### Advanced overrides
+
+These settings are available only as environment variables and are not exposed in
+the plugin configuration prompt:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `CLAUDE_WATCHDOG_LOG` | `~/.claude/logs/claude-watchdog.log` | Debug log path |
 | `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
-| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Skip turns whose delta has fewer tool calls than this (prevents review-storms on short back-and-forth edits) |
-| `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Minimum seconds between analyses for the same session. Set to `0` to disable |
 | `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (weighted: 20% user messages, 80% recent context) |
-| `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` when running as an installed plugin, otherwise `~/.claude/tmp/claude-watchdog` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
+| `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
+| `CLAUDE_WATCHDOG_VERBOSE` | `0` | Set to `1` to include a truncation notice in condensed transcripts |
 
 You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
 

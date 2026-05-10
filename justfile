@@ -269,6 +269,64 @@ test-cursor:
     cleanup_session "$sid10"
     pass "cooldown"
 
+    # --- Test 11: userConfig fallback (CLAUDE_PLUGIN_OPTION_* used when legacy var unset) ---
+    sid11="cursor-t11-$$"
+    cleanup_session "$sid11"
+    t11_transcript="$TMPROOT/t11.jsonl"
+    mk_transcript "$t11_transcript" 1 5 OLD
+    payload11=$(jq -n --arg sid "$sid11" --arg tp "$t11_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    rc=0
+    echo "$payload11" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "userconfig-fallback" "expected 2 got $rc"; }
+    cleanup_session "$sid11"
+    pass "userconfig-fallback"
+
+    # --- Test 12: userConfig disabled=true skips analysis ---
+    sid12="cursor-t12-$$"
+    cleanup_session "$sid12"
+    t12_transcript="$TMPROOT/t12.jsonl"
+    mk_transcript "$t12_transcript" 1 5 OLD
+    payload12=$(jq -n --arg sid "$sid12" --arg tp "$t12_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    rc=0
+    echo "$payload12" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_DISABLED=true bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "userconfig-disabled" "expected 0 got $rc"; }
+    grep -q "SKIP: disabled via configuration" "$TEST_LOG" || fail "userconfig-disabled-log" "no disabled log"
+    cleanup_session "$sid12"
+    pass "userconfig-disabled"
+
+    # --- Test 13: legacy env var overrides CLAUDE_PLUGIN_OPTION_* ---
+    sid13="cursor-t13-$$"
+    cleanup_session "$sid13"
+    t13_transcript="$TMPROOT/t13.jsonl"
+    mk_transcript "$t13_transcript" 1 5 OLD
+    payload13=$(jq -n --arg sid "$sid13" --arg tp "$t13_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    # Legacy MIN_TOOL_USES=3 should win over CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999
+    rc=0
+    echo "$payload13" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "legacy-overrides-plugin" "expected 2 got $rc (legacy var should win over plugin option)"; }
+    cleanup_session "$sid13"
+    pass "legacy-overrides-plugin"
+
+    # --- Test 14: CLAUDE_WATCHDOG_VERBOSE=1 adds truncation header ---
+    sid14="cursor-t14-$$"
+    cleanup_session "$sid14"
+    t14_transcript="$TMPROOT/t14.jsonl"
+    # Generate enough data to exceed a tiny MAX_BYTES budget
+    mk_transcript "$t14_transcript" 1 20 VERBOSE
+    payload14=$(jq -n --arg sid "$sid14" --arg tp "$t14_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    rc=0
+    echo "$payload14" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_MAX_BYTES=512 CLAUDE_WATCHDOG_VERBOSE=1 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "verbose-trigger" "expected 2 got $rc"; }
+    condensed14="$WATCHDOG_DIR/condensed-${sid14}.txt"
+    [ -f "$condensed14" ] || fail "verbose-condensed-exists" "condensed file not found"
+    grep -q "\\[TRUNCATED\\]" "$condensed14" || { cat "$condensed14"; fail "verbose-header" "truncation header not found in condensed output"; }
+    cleanup_session "$sid14"
+    pass "verbose-truncation-header"
+
     echo "--- all cursor tests passed ---"
 
 # Test the SubagentStop persistence hook

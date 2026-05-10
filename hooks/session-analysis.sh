@@ -8,14 +8,14 @@ set -euo pipefail
 
 LOG_FILE="${CLAUDE_WATCHDOG_LOG:-$HOME/.claude/logs/claude-watchdog.log}"
 MAX_LINES="${CLAUDE_WATCHDOG_LOG_MAX_LINES:-1000}"
-MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-8}"
+MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-${CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES:-8}}"
 CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-51200}"
 WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-${CLAUDE_PLUGIN_DATA:-$HOME/.claude/tmp/claude-watchdog}}"
 SESSIONS_DIR="$WATCHDOG_TMP/sessions"
 ANALYSES_DIR="${CLAUDE_WATCHDOG_ANALYSES_DIR:-$HOME/.claude/logs/claude-watchdog-analyses}"
 CURSOR_TTL_DAYS="${CLAUDE_WATCHDOG_CURSOR_TTL_DAYS:-7}"
 CURSOR_SLICE="${CLAUDE_WATCHDOG_CURSOR_SLICE:-$(dirname "$0")/cursor-slice.mjs}"
-COOLDOWN_SECONDS="${CLAUDE_WATCHDOG_COOLDOWN_SECONDS:-600}"
+COOLDOWN_SECONDS="${CLAUDE_WATCHDOG_COOLDOWN_SECONDS:-${CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS:-600}}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$WATCHDOG_TMP" && chmod 700 "$WATCHDOG_TMP"
@@ -53,9 +53,10 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# Per-project disable via environment variable
-if [ "${CLAUDE_WATCHDOG_DISABLED:-0}" = "1" ]; then
-  log "SKIP: disabled via CLAUDE_WATCHDOG_DISABLED"
+# Per-project disable via environment variable or userConfig
+_wd_disabled="${CLAUDE_WATCHDOG_DISABLED:-${CLAUDE_PLUGIN_OPTION_DISABLED:-0}}"
+if [ "$_wd_disabled" = "1" ] || [ "$_wd_disabled" = "true" ]; then
+  log "SKIP: disabled via configuration"
   exit 0
 fi
 
@@ -219,7 +220,12 @@ if [ "$raw_size" -le "$CONDENSED_MAX_BYTES" ]; then
 else
   USER_BUDGET=$(( CONDENSED_MAX_BYTES / 5 ))
   OTHER_BUDGET=$(( CONDENSED_MAX_BYTES * 4 / 5 ))
+  dropped_kb=$(( (raw_size - CONDENSED_MAX_BYTES) / 1024 ))
   {
+    if [ "${CLAUDE_WATCHDOG_VERBOSE:-0}" = "1" ]; then
+      echo "[TRUNCATED] Original transcript was ${raw_size} bytes (~${dropped_kb}KB dropped). Early context may be incomplete."
+      echo ""
+    fi
     # All user messages (capped at 20% budget), preserving chronological order
     (grep '^USER: ' "$RAW_FILE" || true) | head -c "$USER_BUDGET"
     echo ""

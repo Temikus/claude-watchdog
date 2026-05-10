@@ -2,12 +2,34 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "claude-watchdog",
   "description": "Auto-runs a critical session post-mortem when Claude Code stops. Ships the analyze-session command, session-analyzer agent, and a Stop hook that triggers the review in-session (no external API calls).",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": {
     "name": "Artem Yakimenko"
   },
   "homepage": "https://github.com/Temikus/claude-watchdog",
   "repository": "https://github.com/Temikus/claude-watchdog",
   "license": "MIT",
-  "keywords": ["session", "analysis", "post-mortem", "hooks", "review"]
+  "keywords": ["session", "analysis", "post-mortem", "hooks", "review"],
+  "userConfig": {
+    "disabled": {
+      "type": "boolean",
+      "title": "Disable watchdog",
+      "description": "Set to true to disable automatic session analysis",
+      "default": false
+    },
+    "min_tool_uses": {
+      "type": "number",
+      "title": "Minimum tool calls",
+      "description": "Skip analysis if the session delta has fewer tool calls than this",
+      "default": 8,
+      "min": 0
+    },
+    "cooldown_seconds": {
+      "type": "number",
+      "title": "Cooldown (seconds)",
+      "description": "Minimum seconds between analyses for the same session. Set to 0 to disable",
+      "default": 600,
+      "min": 0
+    }
+  }
 }
