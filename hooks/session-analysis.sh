@@ -9,7 +9,7 @@ set -euo pipefail
 LOG_FILE="${CLAUDE_WATCHDOG_LOG:-$HOME/.claude/logs/claude-watchdog.log}"
 MAX_LINES="${CLAUDE_WATCHDOG_LOG_MAX_LINES:-1000}"
 MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-${CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES:-8}}"
-CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-51200}"
+CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-${CLAUDE_PLUGIN_OPTION_MAX_TRANSCRIPT_BYTES:-51200}}"
 WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-${CLAUDE_PLUGIN_DATA:-$HOME/.claude/tmp/claude-watchdog}}"
 SESSIONS_DIR="$WATCHDOG_TMP/sessions"
 ANALYSES_DIR="${CLAUDE_WATCHDOG_ANALYSES_DIR:-$HOME/.claude/logs/claude-watchdog-analyses}"
@@ -214,15 +214,16 @@ jq -r '
 
 # Weighted extraction: prioritize USER messages over tool noise
 raw_size=$(wc -c < "$RAW_FILE" 2>/dev/null || echo 0)
+_wd_verbose="${CLAUDE_WATCHDOG_VERBOSE:-${CLAUDE_PLUGIN_OPTION_VERBOSE:-0}}"
+
 if [ "$raw_size" -le "$CONDENSED_MAX_BYTES" ]; then
-  # Fits within budget — keep everything in chronological order
   mv "$RAW_FILE" "$CONDENSED_FILE"
 else
   USER_BUDGET=$(( CONDENSED_MAX_BYTES / 5 ))
   OTHER_BUDGET=$(( CONDENSED_MAX_BYTES * 4 / 5 ))
   dropped_kb=$(( (raw_size - CONDENSED_MAX_BYTES) / 1024 ))
   {
-    if [ "${CLAUDE_WATCHDOG_VERBOSE:-0}" = "1" ]; then
+    if [ "$_wd_verbose" = "1" ] || [ "$_wd_verbose" = "true" ]; then
       echo "[TRUNCATED] Original transcript was ${raw_size} bytes (~${dropped_kb}KB dropped). Early context may be incomplete."
       echo ""
     fi
@@ -239,6 +240,17 @@ fi
 
 condensed_size=$(wc -c < "$CONDENSED_FILE" 2>/dev/null || echo 0)
 log "condensed file: ${CONDENSED_FILE} (${condensed_size} bytes)"
+
+# Verbose: prepend diagnostics header to condensed transcript
+if [ "$_wd_verbose" = "1" ] || [ "$_wd_verbose" = "true" ]; then
+  user_msg_count=$(grep -c '^USER: ' "$CONDENSED_FILE" 2>/dev/null || echo 0)
+  {
+    echo "[DIAGNOSTICS] raw=${raw_size}B condensed=${condensed_size}B tool_uses=${tool_use_count} user_messages=${user_msg_count} delta_start=${DELTA_START}"
+    echo ""
+    cat "$CONDENSED_FILE"
+  } > "$CONDENSED_FILE.tmp" && mv "$CONDENSED_FILE.tmp" "$CONDENSED_FILE"
+  log "VERBOSE: prepended diagnostics header"
+fi
 
 if [ ! -s "$CONDENSED_FILE" ]; then
   log "SKIP: condensed transcript is empty (jq produced no output)"
