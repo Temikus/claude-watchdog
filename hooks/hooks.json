@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-analysis.sh",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-analysis.mjs",
             "timeout": 120
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/persist-analysis.sh",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/persist-analysis.mjs",
             "timeout": 10
           }
         ]

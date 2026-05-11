@@ -3,12 +3,13 @@ set shell := ["bash", "-uc"]
 default:
     @just --list
 
-# Validate JSON manifests and bash syntax
+# Validate JSON manifests and JS syntax
 lint:
     jq empty .claude-plugin/plugin.json
     jq empty hooks/hooks.json
-    bash -n hooks/session-analysis.sh
-    bash -n hooks/persist-analysis.sh
+    node --check hooks/session-analysis.mjs
+    node --check hooks/persist-analysis.mjs
+    node --check hooks/cursor-slice.mjs
 
 # Smoke-test the hook with a synthetic Stop event
 smoke:
@@ -26,7 +27,7 @@ smoke:
     done
     payload=$(jq -n --arg sid "$session_id" --arg tp "$transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
-    echo "$payload" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh && rc=$? || rc=$?
+    echo "$payload" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs && rc=$? || rc=$?
     echo "hook exit: $rc (expected 2)"
     echo "--- log ---"
     cat "$tmpdir/log"
@@ -68,7 +69,7 @@ test-cursor:
       payload=$(jq -n --arg sid "$sid" --arg tp "$tp" --arg cwd "$PWD" \
         '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
       local rc=0
-      echo "$payload" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+      echo "$payload" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
       echo "$rc"
     }
 
@@ -250,7 +251,7 @@ test-cursor:
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     # First run: no cursor yet, should trigger
     rc=0
-    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "cooldown-first-run" "expected 2 got $rc"; }
     # Append enough new tool uses to clear MIN_TOOL_USES
     for i in 1 2 3; do
@@ -259,12 +260,12 @@ test-cursor:
     done
     # Second run: cursor mtime is fresh, cooldown=60s should skip
     rc=0
-    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "cooldown-second-run" "expected 0 got $rc"; }
     grep -q "SKIP: cooldown active" "$TEST_LOG" || fail "cooldown-log" "no cooldown log"
     # Third run with cooldown=0 should trigger again, proving the gate is the only thing blocking
     rc=0
-    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "cooldown-disabled" "expected 2 got $rc"; }
     cleanup_session "$sid10"
     pass "cooldown"
@@ -277,7 +278,7 @@ test-cursor:
     payload11=$(jq -n --arg sid "$sid11" --arg tp "$t11_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload11" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload11" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "userconfig-fallback" "expected 2 got $rc"; }
     cleanup_session "$sid11"
     pass "userconfig-fallback"
@@ -290,7 +291,7 @@ test-cursor:
     payload12=$(jq -n --arg sid "$sid12" --arg tp "$t12_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload12" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_DISABLED=true bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload12" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_DISABLED=true node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "userconfig-disabled" "expected 0 got $rc"; }
     grep -q "SKIP: disabled via configuration" "$TEST_LOG" || fail "userconfig-disabled-log" "no disabled log"
     cleanup_session "$sid12"
@@ -305,7 +306,7 @@ test-cursor:
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     # Legacy MIN_TOOL_USES=3 should win over CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999
     rc=0
-    echo "$payload13" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload13" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "legacy-overrides-plugin" "expected 2 got $rc (legacy var should win over plugin option)"; }
     cleanup_session "$sid13"
     pass "legacy-overrides-plugin"
@@ -319,7 +320,7 @@ test-cursor:
     payload14=$(jq -n --arg sid "$sid14" --arg tp "$t14_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload14" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_MAX_BYTES=512 CLAUDE_WATCHDOG_VERBOSE=1 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload14" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_MAX_BYTES=512 CLAUDE_WATCHDOG_VERBOSE=1 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "verbose-trigger" "expected 2 got $rc"; }
     condensed14="$WATCHDOG_DIR/condensed-${sid14}.txt"
     [ -f "$condensed14" ] || fail "verbose-condensed-exists" "condensed file not found"
@@ -337,7 +338,7 @@ test-cursor:
     payload15=$(jq -n --arg sid "$sid15" --arg tp "$t15_transcript" --arg cwd "$t15_cwd" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload15" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload15" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "local-storage-exit" "expected 2 got $rc"; }
     local_sessions="$t15_cwd/.claude/tmp/claude-watchdog/sessions"
     [ -f "$local_sessions/condensed-${sid15}.txt" ] || fail "local-storage-file" "condensed not in local path"
@@ -355,7 +356,7 @@ test-cursor:
     payload16=$(jq -n --arg sid "$sid16" --arg tp "$t16_transcript" --arg cwd "$TMPROOT/nonexistent-dir" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload16" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    echo "$payload16" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
     [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "local-fallback-exit" "expected 2 got $rc"; }
     [ -f "$WATCHDOG_DIR/condensed-${sid16}.txt" ] || fail "local-fallback-global" "condensed not in global path"
     grep -q "LOCAL_STORAGE: hook_cwd empty or invalid" "$TEST_LOG" || fail "local-fallback-log" "no fallback log"
@@ -380,7 +381,7 @@ test-persist:
     sid1="persist-t1-$$"
     payload=$(jq -n --arg sid "$sid1" --arg msg $'### Goals\nSome analysis.' \
       '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:$msg}')
-    echo "$payload" | bash hooks/persist-analysis.sh
+    echo "$payload" | node hooks/persist-analysis.mjs
     out=$(ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid1}-*.md 2>/dev/null | head -1)
     [ -n "$out" ] || fail "analyzer-writes" "no analysis file written"
     grep -q "### Goals" "$out" || fail "analyzer-content" "file missing content"
@@ -390,7 +391,7 @@ test-persist:
     sid2="persist-t2-$$"
     payload=$(jq -n --arg sid "$sid2" --arg msg "ignored" \
       '{session_id:$sid, agent_type:"general-purpose", last_assistant_message:$msg}')
-    echo "$payload" | bash hooks/persist-analysis.sh
+    echo "$payload" | node hooks/persist-analysis.mjs
     if ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid2}-*.md >/dev/null 2>&1; then
       fail "other-agent-ignored" "wrote file for non-analyzer subagent"
     fi
@@ -400,7 +401,7 @@ test-persist:
     sid3="persist-t3-$$"
     payload=$(jq -n --arg sid "$sid3" \
       '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:""}')
-    echo "$payload" | bash hooks/persist-analysis.sh
+    echo "$payload" | node hooks/persist-analysis.mjs
     if ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid3}-*.md >/dev/null 2>&1; then
       fail "empty-message" "wrote file for empty message"
     fi
@@ -410,7 +411,7 @@ test-persist:
     # --- Test 4: invalid session_id is rejected ---
     payload=$(jq -n --arg msg "x" \
       '{session_id:"evil; rm -rf /", agent_type:"session-analyzer", last_assistant_message:$msg}')
-    echo "$payload" | bash hooks/persist-analysis.sh
+    echo "$payload" | node hooks/persist-analysis.mjs
     grep -q "invalid session_id" "$CLAUDE_WATCHDOG_LOG" || fail "bad-sid" "no invalid-sid log"
     pass "invalid-session-id"
 

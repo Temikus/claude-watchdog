@@ -49,7 +49,7 @@ That adds my personal plugin marketplace (which also hosts any future plugins) a
 Run a short session and end Claude's turn. You should see output like:
 
 ```
-[bash session-analysis.sh]: Please spawn a session-analyzer agent...
+[node session-analysis.mjs]: Please spawn a session-analyzer agent...
 ```
 
 …followed by the analysis. If nothing appears, check `~/.claude/logs/claude-watchdog.log` — every hook invocation is logged with the reason it ran or skipped.
@@ -58,16 +58,15 @@ Run a short session and end Claude's turn. You should see output like:
 
 | Component | Path | Purpose |
 | --- | --- | --- |
-| Stop hook | `hooks/session-analysis.sh` | Preprocesses the transcript, triggers the analyzer |
-| SubagentStop hook | `hooks/persist-analysis.sh` | Persists the analyzer's output to disk (no UI noise) |
+| Stop hook | `hooks/session-analysis.mjs` | Preprocesses the transcript, triggers the analyzer |
+| SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk (no UI noise) |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
 | Slash command | `skills/analyze-session/SKILL.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
 ## Requirements
 
 - **Claude Code** ≥ 1.0 (plugin support)
-- **`jq`** on your `PATH` — install with `brew install jq` / `apt install jq`. The hook exits cleanly if `jq` is missing.
-- **Bash 3.2+** (macOS default works fine)
+- **Node.js** ≥ 18 (for the hook scripts)
 - **git** in the working directory you want analyzed (the agent runs `git diff` to compare intent vs. reality — sessions in non-git dirs still get a transcript-only review)
 
 ## When does the hook actually fire?
@@ -80,8 +79,7 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
 - Transcript exists and has ≥ configured minimum tool calls (default 8) in the unanalyzed delta
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
-- Condensed transcript is non-empty after jq filtering
-- `jq` is installed
+- Condensed transcript is non-empty after filtering
 
 Every decision is logged to `~/.claude/logs/claude-watchdog.log`.
 
@@ -140,11 +138,11 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 ## How it works
 
 1. Claude Code fires the `Stop` hook when a turn ends.
-2. `session-analysis.sh` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
-3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. Files older than 2 hours are cleaned up automatically in both locations.
+2. `session-analysis.mjs` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
+3. It filters the JSONL transcript down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. Files older than 2 hours are cleaned up automatically in both locations.
 4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
-6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.sh` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
+6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.mjs` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
 
 No data leaves your machine except through Claude Code's normal model calls.
 
@@ -167,8 +165,10 @@ rm -rf ~/.claude/tmp/claude-watchdog  # only exists on pre-0.4 installs or custo
 
 ## Development
 
+Requires `jq` and `just` in addition to Node.js:
+
 ```bash
-just lint    # validate JSON manifests and bash syntax
+just lint    # validate JSON manifests and JS syntax
 just test    # run smoke tests
 just check   # lint + all tests
 ```
