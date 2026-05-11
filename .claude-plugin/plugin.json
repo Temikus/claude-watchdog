@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "claude-watchdog",
   "description": "Auto-runs a critical session post-mortem when Claude Code stops. Ships the analyze-session command, session-analyzer agent, and a Stop hook that triggers the review in-session (no external API calls).",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "author": {
     "name": "Artem Yakimenko"
   },
@@ -20,14 +20,14 @@
     "min_tool_uses": {
       "type": "number",
       "title": "Minimum tool calls",
-      "description": "Skip analysis if the session delta has fewer tool calls than this",
+      "description": "Skip analysis if the session delta has fewer tool calls than this. Default is 8",
       "default": 8,
       "min": 0
     },
     "cooldown_seconds": {
       "type": "number",
       "title": "Cooldown (seconds)",
-      "description": "Minimum seconds between analyses for the same session. Set to 0 to disable",
+      "description": "Minimum seconds between analyses for the same session. Set to 0 to disable. Default is 600 (10 minutes)",
       "default": 600,
       "min": 0
     },
