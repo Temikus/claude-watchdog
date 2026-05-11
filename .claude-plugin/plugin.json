@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "claude-watchdog",
   "description": "Auto-runs a critical session post-mortem when Claude Code stops. Ships the analyze-session command, session-analyzer agent, and a Stop hook that triggers the review in-session (no external API calls).",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "author": {
     "name": "Artem Yakimenko"
   },
@@ -34,7 +34,7 @@
     "verbose": {
       "type": "boolean",
       "title": "Enable verbose mode",
-      "description": "Include extra diagnostics (e.g. truncation notices) in the condensed transcript",
+      "description": "Prepend a diagnostics header (raw/condensed size, tool use count, user messages) to every condensed transcript and add truncation notices when applicable",
       "default": false
     },
     "max_transcript_bytes": {
@@ -42,7 +42,8 @@
       "title": "Max transcript size (bytes)",
       "description": "Maximum size of the condensed transcript sent to the analyzer, in bytes. Larger values give the analyzer more context but increase processing time. Default is 51200 (50 KB)",
       "default": 51200,
-      "min": 4096
+      "min": 4096,
+      "max": 512000
     }
   }
 }
