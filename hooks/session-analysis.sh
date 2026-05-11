@@ -11,23 +11,27 @@ MAX_LINES="${CLAUDE_WATCHDOG_LOG_MAX_LINES:-1000}"
 MIN_TOOL_USES="${CLAUDE_WATCHDOG_MIN_TOOL_USES:-${CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES:-8}}"
 CONDENSED_MAX_BYTES="${CLAUDE_WATCHDOG_MAX_BYTES:-${CLAUDE_PLUGIN_OPTION_MAX_TRANSCRIPT_BYTES:-51200}}"
 WATCHDOG_TMP="${CLAUDE_WATCHDOG_TMP:-${CLAUDE_PLUGIN_DATA:-$HOME/.claude/tmp/claude-watchdog}}"
-SESSIONS_DIR="$WATCHDOG_TMP/sessions"
+GLOBAL_SESSIONS_DIR="$WATCHDOG_TMP/sessions"
 ANALYSES_DIR="${CLAUDE_WATCHDOG_ANALYSES_DIR:-$HOME/.claude/logs/claude-watchdog-analyses}"
 CURSOR_TTL_DAYS="${CLAUDE_WATCHDOG_CURSOR_TTL_DAYS:-7}"
 CURSOR_SLICE="${CLAUDE_WATCHDOG_CURSOR_SLICE:-$(dirname "$0")/cursor-slice.mjs}"
 COOLDOWN_SECONDS="${CLAUDE_WATCHDOG_COOLDOWN_SECONDS:-${CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS:-600}}"
+LOCAL_STORAGE="${CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE:-${CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE:-0}}"
+
+cleanup_sessions_dir() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  find "$dir" -maxdepth 1 -type f \( -name 'condensed-*' -o -name 'raw-*' -o -name 'delta-*' \) -mmin +120 -delete 2>/dev/null || true
+  find "$dir" -mindepth 1 -maxdepth 1 -type d -mmin +120 -exec rmdir {} + 2>/dev/null || true
+  find "$dir" -maxdepth 1 -type f -name 'cursor-*' -mtime "+${CURSOR_TTL_DAYS}" -delete 2>/dev/null || true
+}
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$WATCHDOG_TMP" && chmod 700 "$WATCHDOG_TMP"
-mkdir -p "$SESSIONS_DIR" && chmod 700 "$SESSIONS_DIR"
+mkdir -p "$GLOBAL_SESSIONS_DIR" && chmod 700 "$GLOBAL_SESSIONS_DIR"
 mkdir -p "$ANALYSES_DIR"
 
-# Cleanup: condensed/raw/delta files older than 2 hours
-find "$SESSIONS_DIR" -maxdepth 1 -type f \( -name 'condensed-*' -o -name 'raw-*' -o -name 'delta-*' \) -mmin +120 -delete 2>/dev/null || true
-# Cleanup: marker directories older than 2 hours (empty dirs from atomic mkdir)
-find "$SESSIONS_DIR" -mindepth 1 -maxdepth 1 -type d -mmin +120 -exec rmdir {} + 2>/dev/null || true
-# Cleanup: cursor files older than CURSOR_TTL_DAYS days
-find "$SESSIONS_DIR" -maxdepth 1 -type f -name 'cursor-*' -mtime "+${CURSOR_TTL_DAYS}" -delete 2>/dev/null || true
+cleanup_sessions_dir "$GLOBAL_SESSIONS_DIR"
 
 # Keep only 20 most recent analyses
 ls -t "$ANALYSES_DIR"/*.md 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
@@ -95,6 +99,26 @@ fi
 if [ -n "$hook_cwd" ] && [ -f "${hook_cwd}/.claude-watchdog-skip" ]; then
   log "SKIP: disabled via .claude-watchdog-skip in ${hook_cwd}"
   exit 0
+fi
+
+# Resolve SESSIONS_DIR: project-local when local_session_storage is enabled
+if [ "$LOCAL_STORAGE" = "1" ] || [ "$LOCAL_STORAGE" = "true" ]; then
+  if [ -n "$hook_cwd" ] && [ "$hook_cwd" != "null" ] && [ -d "$hook_cwd" ]; then
+    SESSIONS_DIR="${hook_cwd}/.claude/tmp/claude-watchdog/sessions"
+    if mkdir -p "$SESSIONS_DIR" 2>/dev/null; then
+      chmod 700 "$SESSIONS_DIR"
+      cleanup_sessions_dir "$SESSIONS_DIR"
+      log "LOCAL_STORAGE: using project-local path ${SESSIONS_DIR}"
+    else
+      SESSIONS_DIR="$GLOBAL_SESSIONS_DIR"
+      log "LOCAL_STORAGE: cannot create local dir, falling back to global"
+    fi
+  else
+    SESSIONS_DIR="$GLOBAL_SESSIONS_DIR"
+    log "LOCAL_STORAGE: hook_cwd empty or invalid, falling back to global"
+  fi
+else
+  SESSIONS_DIR="$GLOBAL_SESSIONS_DIR"
 fi
 
 # Short-lived lock (released on EXIT). Prevents concurrent runs for the same session.

@@ -327,6 +327,41 @@ test-cursor:
     cleanup_session "$sid14"
     pass "verbose-truncation-header"
 
+    # --- Test 15: local-storage stores files in project-local path ---
+    sid15="cursor-t15-$$"
+    cleanup_session "$sid15"
+    t15_cwd="$TMPROOT/fake-project"
+    mkdir -p "$t15_cwd"
+    t15_transcript="$TMPROOT/t15.jsonl"
+    mk_transcript "$t15_transcript" 1 5 LOCAL
+    payload15=$(jq -n --arg sid "$sid15" --arg tp "$t15_transcript" --arg cwd "$t15_cwd" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    rc=0
+    echo "$payload15" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "local-storage-exit" "expected 2 got $rc"; }
+    local_sessions="$t15_cwd/.claude/tmp/claude-watchdog/sessions"
+    [ -f "$local_sessions/condensed-${sid15}.txt" ] || fail "local-storage-file" "condensed not in local path"
+    if [ -f "$WATCHDOG_DIR/condensed-${sid15}.txt" ]; then fail "local-storage-global-leaked" "condensed found in global path"; fi
+    grep -q "LOCAL_STORAGE: using project-local path" "$TEST_LOG" || fail "local-storage-log" "no local storage log"
+    rm -rf "$t15_cwd/.claude"
+    cleanup_session "$sid15"
+    pass "local-storage"
+
+    # --- Test 16: local-storage fallback on invalid cwd ---
+    sid16="cursor-t16-$$"
+    cleanup_session "$sid16"
+    t16_transcript="$TMPROOT/t16.jsonl"
+    mk_transcript "$t16_transcript" 1 5 FALLBACK
+    payload16=$(jq -n --arg sid "$sid16" --arg tp "$t16_transcript" --arg cwd "$TMPROOT/nonexistent-dir" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    rc=0
+    echo "$payload16" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 bash hooks/session-analysis.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "local-fallback-exit" "expected 2 got $rc"; }
+    [ -f "$WATCHDOG_DIR/condensed-${sid16}.txt" ] || fail "local-fallback-global" "condensed not in global path"
+    grep -q "LOCAL_STORAGE: hook_cwd empty or invalid" "$TEST_LOG" || fail "local-fallback-log" "no fallback log"
+    cleanup_session "$sid16"
+    pass "local-storage-fallback"
+
     echo "--- all cursor tests passed ---"
 
 # Test the SubagentStop persistence hook

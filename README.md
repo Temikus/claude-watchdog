@@ -96,6 +96,9 @@ with `/plugin configure claude-watchdog`:
 | Disable watchdog | `false` | Set to `true` to disable automatic session analysis |
 | Minimum tool calls | `8` | Skip analysis if the session delta has fewer tool calls than this |
 | Cooldown (seconds) | `600` | Minimum seconds between analyses for the same session. Set to `0` to disable |
+| Enable verbose mode | `false` | Prepend a diagnostics header to every condensed transcript and add truncation notices |
+| Store transcripts in project directory | `false` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
+| Max transcript size (bytes) | `51200` | Maximum size of the condensed transcript sent to the analyzer (4 KB – 500 KB) |
 
 ### Environment variable overrides
 
@@ -122,6 +125,7 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
 | `CLAUDE_WATCHDOG_VERBOSE` | `0` | Set to `1` to include a truncation notice in condensed transcripts |
+| `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `0` | Set to `1` to store session files in the project directory |
 
 You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
 
@@ -137,7 +141,7 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 
 1. Claude Code fires the `Stop` hook when a turn ends.
 2. `session-analysis.sh` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
-3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). Files older than 2 hours are cleaned up automatically.
+3. It filters the JSONL transcript with `jq` down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. Files older than 2 hours are cleaned up automatically in both locations.
 4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
 6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.sh` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
