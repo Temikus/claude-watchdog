@@ -35,7 +35,8 @@ Any concerns about the code, approaches, or information produced? Flag anything 
 Were any user instructions ignored or only partially followed? Were poor decisions made without flagging trade-offs? Were critical concerns raised by the user dismissed or handwaved away? Look for cases where Claude agreed too easily, skipped over risks, or failed to push back when it should have.
 
 ### Recommendations
-1-3 specific, actionable items for follow-up or improvement.
+1-3 specific, actionable items for follow-up or improvement. Format each as:
+**Short Title**: One-sentence actionable description.
 
 Rules:
 - Be direct and critical, not flattering — the user wants honest assessment

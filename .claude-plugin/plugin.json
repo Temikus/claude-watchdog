@@ -56,6 +56,12 @@
       "default": 51200,
       "min": 4096,
       "max": 512000
+    },
+    "interactive_recommendations": {
+      "type": "boolean",
+      "title": "Interactive recommendations",
+      "description": "After session analysis, present actionable recommendations as an interactive multi-select prompt so you can choose which items to address. Selected items are saved to .claude/watchdog-todo.md",
+      "default": false
     }
   }
 }

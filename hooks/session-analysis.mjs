@@ -21,6 +21,7 @@ const ANALYSES_DIR = process.env.CLAUDE_WATCHDOG_ANALYSES_DIR ?? join(homedir(),
 const CURSOR_TTL_DAYS = parseInt(process.env.CLAUDE_WATCHDOG_CURSOR_TTL_DAYS ?? '7', 10);
 const COOLDOWN_SECONDS = parseInt(cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS', '600'), 10);
 const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
+const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -370,6 +371,26 @@ try {
   const safeCwd = (hookCwd || '').replace(/\n/g, '');
   const safeCondensed = CONDENSED_FILE.replace(/\n/g, '');
 
+  const isInteractive = INTERACTIVE_RECS === '1' || INTERACTIVE_RECS === 'true';
+  const safeTodoPath = join(safeCwd, '.claude/watchdog-todo.md').replace(/\n/g, '');
+
+  let postAnalysis;
+  if (isInteractive) {
+    postAnalysis = `Present the full analysis to the user.
+
+Then, extract the recommendations from the Recommendations section. Use the AskUserQuestion tool to present them as actionable options:
+- question: "Which recommendations would you like to address?"
+- header: "Actions"
+- multiSelect: true
+- For each recommendation, create an option with the bold title as the label and the description as the description
+
+If the user selects any recommendations, save them as a markdown checklist to '${safeTodoPath}' (create the directory if needed). Format each selected item as an unchecked task: "- [ ] recommendation text". If the file already exists, overwrite it.
+
+Then stop.`;
+  } else {
+    postAnalysis = 'Present the analysis to the user, then stop.';
+  }
+
   const instruction = `Please spawn a session-analyzer agent to critically analyze this session.
 
 Use the Agent tool with:
@@ -377,7 +398,7 @@ Use the Agent tool with:
 - model: "sonnet"
 - prompt: "Read and analyze the condensed session transcript at '${safeCondensed}'. The working directory is '${safeCwd}'. Provide your critical analysis."
 
-Present the analysis to the user, then stop.`;
+${postAnalysis}`;
 
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {
