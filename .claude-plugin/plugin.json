@@ -2,14 +2,20 @@
   "$schema": "https://www.schemastore.org/claude-code-plugin-manifest.json",
   "name": "claude-watchdog",
   "description": "Auto-runs a critical session post-mortem when Claude Code stops. Ships the analyze-session command, session-analyzer agent, and a Stop hook that triggers the review in-session (no external API calls).",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "author": {
     "name": "Artem Yakimenko"
   },
   "homepage": "https://github.com/Temikus/claude-watchdog",
   "repository": "https://github.com/Temikus/claude-watchdog",
   "license": "MIT",
-  "keywords": ["session", "analysis", "post-mortem", "hooks", "review"],
+  "keywords": [
+    "session",
+    "analysis",
+    "post-mortem",
+    "hooks",
+    "review"
+  ],
   "userConfig": {
     "disabled": {
       "type": "boolean",
