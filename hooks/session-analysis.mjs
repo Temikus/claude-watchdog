@@ -363,20 +363,21 @@ try {
   const condensedSize = Buffer.byteLength(condensedContent, 'utf8');
   log(`condensed file: ${CONDENSED_FILE} (${condensedSize} bytes)`);
 
-  log('TRIGGER: injecting session-analyzer subagent request (exit 2)');
+  const useLegacyExit2 = cfg('CLAUDE_WATCHDOG_LEGACY_HOOK', 'CLAUDE_PLUGIN_OPTION_legacy_hook', 'false') === 'true';
+
+  log(`TRIGGER: injecting session-analyzer subagent request (mode=${useLegacyExit2 ? 'exit2' : 'json'})`);
 
   const safeCwd = (hookCwd || '').replace(/\n/g, '');
   const safeCondensed = CONDENSED_FILE.replace(/\n/g, '');
 
-  process.stderr.write(`Please spawn a session-analyzer agent to critically analyze this session.
+  const instruction = `Please spawn a session-analyzer agent to critically analyze this session.
 
 Use the Agent tool with:
 - subagent_type: "session-analyzer"
 - model: "sonnet"
 - prompt: "Read and analyze the condensed session transcript at '${safeCondensed}'. The working directory is '${safeCwd}'. Provide your critical analysis."
 
-Present the analysis to the user, then stop.
-`);
+Present the analysis to the user, then stop.`;
 
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {
@@ -389,7 +390,13 @@ Present the analysis to the user, then stop.
     }
   }
 
-  process.exit(2);
+  if (useLegacyExit2) {
+    process.stderr.write(instruction + '\n');
+    process.exit(2);
+  }
+
+  process.stdout.write(JSON.stringify({ decision: 'block', reason: instruction }));
+  process.exit(0);
 } catch (err) {
   try { log(`ERROR: unexpected failure: ${err.message}`); } catch { /* logging itself failed */ }
   process.exit(0);
