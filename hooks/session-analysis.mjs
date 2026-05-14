@@ -194,6 +194,11 @@ try {
     process.exit(0);
   }
 
+  if (event.agent_id) {
+    log(`SKIP: running inside subagent/teammate (agent_id=${event.agent_id}, agent_type=${event.agent_type ?? 'unknown'})`);
+    process.exit(0);
+  }
+
   let eventSummary;
   try { eventSummary = JSON.stringify(truncateStrings(event, 200)); } catch { eventSummary = input.slice(0, 500); }
 

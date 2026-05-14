@@ -363,6 +363,21 @@ test-cursor:
     cleanup_session "$sid16"
     pass "local-storage-fallback"
 
+    # --- Test 17: subagent/teammate skip (agent_id present) ---
+    sid17="cursor-t17-$$"
+    cleanup_session "$sid17"
+    t17_transcript="$TMPROOT/t17.jsonl"
+    mk_transcript "$t17_transcript" 1 5 OLD
+    payload17=$(jq -n --arg sid "$sid17" --arg tp "$t17_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", agent_id:"some-agent-id", agent_type:"general-purpose"}')
+    rc=0
+    echo "$payload17" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "subagent-skip-exit" "expected 0 got $rc"; }
+    grep -q "SKIP: running inside subagent/teammate" "$TEST_LOG" || fail "subagent-skip-log" "no subagent skip log"
+    [ ! -f "$WATCHDOG_DIR/condensed-${sid17}.txt" ] || fail "subagent-skip-no-condensed" "condensed file should not exist"
+    cleanup_session "$sid17"
+    pass "subagent-teammate-skip"
+
     echo "--- all cursor tests passed ---"
 
 # Test the SubagentStop persistence hook
