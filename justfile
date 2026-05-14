@@ -442,6 +442,7 @@ check: lint test
 release segment="patch":
     #!/usr/bin/env bash
     set -euo pipefail
+    manifest=".claude-plugin/plugin.json"
     latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
     IFS='.' read -r major minor patch <<< "${latest#v}"
     case "{{segment}}" in
@@ -451,9 +452,13 @@ release segment="patch":
       *) echo "Usage: just release [patch|minor|major]"; exit 1 ;;
     esac
     new="v${major}.${minor}.${patch}"
+    bare="${new#v}"
+    jq --arg v "$bare" '.version = $v' "$manifest" > "${manifest}.tmp" && mv "${manifest}.tmp" "$manifest"
+    git add "$manifest"
+    git commit -m "release: bump version to ${bare}"
     echo "Tagging ${latest} -> ${new}"
     git tag -a "$new" -m "Release ${new}"
-    git push origin "$new"
+    git push origin HEAD --follow-tags
     echo "Released ${new}"
 
 # Install instructions
