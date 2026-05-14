@@ -123,7 +123,7 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
 | `CLAUDE_WATCHDOG_VERBOSE` | `0` | Set to `1` to include a truncation notice in condensed transcripts |
-| `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `0` | Set to `1` to store session files in the project directory |
+| `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `1` | Set to `0` to store session files in the global plugin data path instead of the project directory |
 
 You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
 

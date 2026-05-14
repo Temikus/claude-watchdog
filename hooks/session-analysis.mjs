@@ -20,7 +20,7 @@ const GLOBAL_SESSIONS_DIR = join(WATCHDOG_TMP, 'sessions');
 const ANALYSES_DIR = process.env.CLAUDE_WATCHDOG_ANALYSES_DIR ?? join(homedir(), '.claude/logs/claude-watchdog-analyses');
 const CURSOR_TTL_DAYS = parseInt(process.env.CLAUDE_WATCHDOG_CURSOR_TTL_DAYS ?? '7', 10);
 const COOLDOWN_SECONDS = parseInt(cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS', '600'), 10);
-const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '0');
+const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');

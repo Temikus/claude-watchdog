@@ -46,8 +46,8 @@
     "local_session_storage": {
       "type": "boolean",
       "title": "Store transcripts in project directory",
-      "description": "Store condensed session transcripts under .claude/tmp/claude-watchdog/ in the project directory instead of the global plugin data path. Eliminates Read permission prompts in auto mode. Requires .claude/ in .gitignore. Default is false",
-      "default": false
+      "description": "Store condensed session transcripts under .claude/tmp/claude-watchdog/ in the project directory instead of the global plugin data path. Eliminates Read permission prompts in auto mode. Requires .claude/ in .gitignore. Default is true",
+      "default": true
     },
     "max_transcript_bytes": {
       "type": "number",
