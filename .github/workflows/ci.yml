@@ -7,14 +7,20 @@ on:
     branches: [main]
 
 jobs:
-  check:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Hooks run on whatever Node the user has on PATH, so test the maintained
+        # LTS floor up to current rather than only the newest runtime.
+        node-version: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node-version }}
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -23,3 +29,19 @@ jobs:
         uses: extractions/setup-just@v4
 
       - run: just check
+
+  # Single, stable status check to require in branch protection. Passes only when
+  # every matrix job succeeds (a matrix context name changes with the matrix, so
+  # we aggregate into one fixed `check` context instead).
+  check:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all matrix jobs passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "test matrix did not succeed: ${{ needs.test.result }}"
+            exit 1
+          fi
+          echo "all Node versions passed"

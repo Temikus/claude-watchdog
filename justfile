@@ -17,7 +17,8 @@ smoke:
     set -euo pipefail
     tmpdir=$(mktemp -d)
     session_id="smoketest-$$"
-    sessions="$HOME/.claude/tmp/claude-watchdog/sessions"
+    # Default storage is project-local ($PWD/.claude); the hook receives cwd=$PWD below.
+    sessions="$PWD/.claude/tmp/claude-watchdog/sessions"
     trap 'rm -rf "$tmpdir"; rmdir "$sessions/${session_id}" 2>/dev/null || true; rm -f "$sessions/condensed-${session_id}.txt" "$sessions/raw-${session_id}.txt" "$sessions/cursor-${session_id}.txt" "$sessions/delta-${session_id}.tmp" "$HOME/.claude/logs/claude-watchdog-analyses/${session_id}-"*.md 2>/dev/null || true' EXIT
     transcript="$tmpdir/transcript.jsonl"
     for i in $(seq 1 5); do
@@ -27,13 +28,17 @@ smoke:
     done
     payload=$(jq -n --arg sid "$session_id" --arg tp "$transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
-    echo "$payload" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs && rc=$? || rc=$?
-    echo "hook exit: $rc (expected 2)"
+    out=$(echo "$payload" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) && rc=$? || rc=$?
+    echo "hook exit: $rc (expected 0)"
+    echo "--- stdout ---"
+    echo "$out"
     echo "--- log ---"
     cat "$tmpdir/log"
     echo "--- condensed ---"
     cat "$sessions/condensed-${session_id}.txt" 2>/dev/null || echo "(not found)"
-    [ "$rc" -eq 2 ] || { echo "FAIL: expected exit 2, got $rc"; exit 1; }
+    # Default protocol: analysis is signalled via a JSON `decision:block` on stdout with exit 0.
+    [ "$rc" -eq 0 ] || { echo "FAIL: expected exit 0, got $rc"; exit 1; }
+    echo "$out" | grep -q '"decision":"block"' || { echo "FAIL: expected decision:block on stdout"; exit 1; }
 
 # Cursor / delta-analysis behaviour tests
 test-cursor:
@@ -41,6 +46,10 @@ test-cursor:
     set -euo pipefail
     export WATCHDOG_DIR="$HOME/.claude/tmp/claude-watchdog/sessions"
     mkdir -p "$WATCHDOG_DIR"
+    # Storage defaults to project-local; pin these generic cursor/delta tests to the
+    # global path so they can anchor on WATCHDOG_DIR. The project-local default is
+    # covered explicitly by the local-storage tests (15/16), which override this.
+    export CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=0
 
     mk_msg() {
       # $1 type (user|assistant), $2 uuid, $3 text (for user: plain; for assistant: text block + tool_use)
@@ -62,15 +71,29 @@ test-cursor:
       done
     }
 
+    # Classify the hook result by its real wire protocol: an "analyze this session"
+    # decision is a JSON `decision:block` on stdout with exit 0 (BLOCK); any other
+    # clean exit is a skip (SKIP); a non-zero exit is surfaced as ERR:<code>.
+    hook_outcome() {
+      local out="$1" rc="$2"
+      if [ "$rc" -ne 0 ]; then
+        echo "ERR:$rc"
+      elif printf '%s' "$out" | grep -q '"decision":"block"'; then
+        echo BLOCK
+      else
+        echo SKIP
+      fi
+    }
+
     run_hook() {
-      # $1 session_id, $2 transcript_path -> prints "<exit_code>"
+      # $1 session_id, $2 transcript_path -> prints outcome (BLOCK | SKIP | ERR:<code>)
       local sid="$1" tp="$2"
       local payload
       payload=$(jq -n --arg sid "$sid" --arg tp "$tp" --arg cwd "$PWD" \
         '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
-      local rc=0
-      echo "$payload" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-      echo "$rc"
+      local rc=0 out
+      out=$(echo "$payload" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+      hook_outcome "$out" "$rc"
     }
 
     cleanup_session() {
@@ -113,8 +136,8 @@ test-cursor:
     cleanup_session "$sid2"
     t2_transcript="$TMPROOT/t2.jsonl"
     mk_transcript "$t2_transcript" 1 5 OLD
-    rc=$(run_hook "$sid2" "$t2_transcript")
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "first-run-exit" "expected 2 got $rc"; }
+    outcome=$(run_hook "$sid2" "$t2_transcript")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "first-run-exit" "expected BLOCK got $outcome"; }
     [ -f "$WATCHDOG_DIR/cursor-${sid2}.txt" ] || fail "first-run-cursor-exists" "cursor file missing"
     line1=$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid2}.txt")
     [ "$line1" = "a-OLD-5" ] || fail "first-run-cursor-uuid" "expected a-OLD-5 got $line1"
@@ -133,8 +156,8 @@ test-cursor:
     # append 1 new round (2 messages, 1 tool_use) -> below MIN_TOOL_USES=3
     mk_msg user "u-NEW-1" "NEW user 1" >> "$t3_transcript"
     mk_msg assistant "a-NEW-1" "NEW assistant 1" >> "$t3_transcript"
-    rc=$(run_hook "$sid3" "$t3_transcript")
-    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "trivial-delta-exit" "expected 0 got $rc"; }
+    outcome=$(run_hook "$sid3" "$t3_transcript")
+    [ "$outcome" = "SKIP" ] || { cat "$TEST_LOG"; fail "trivial-delta-exit" "expected SKIP got $outcome"; }
     grep -q "SKIP: delta too small" "$TEST_LOG" || fail "trivial-delta-log" "no SKIP log"
     line1=$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid3}.txt")
     [ "$line1" = "a-OLD-5" ] || fail "trivial-delta-cursor-unchanged" "cursor moved: $line1"
@@ -153,8 +176,8 @@ test-cursor:
       mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t4_transcript"
       mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t4_transcript"
     done
-    rc=$(run_hook "$sid4" "$t4_transcript")
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "substantial-delta-exit" "expected 2 got $rc"; }
+    outcome=$(run_hook "$sid4" "$t4_transcript")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "substantial-delta-exit" "expected BLOCK got $outcome"; }
     condensed="$WATCHDOG_DIR/condensed-${sid4}.txt"
     [ -f "$condensed" ] || fail "substantial-delta-condensed" "no condensed file"
     grep -q "NEWMARK" "$condensed" || fail "substantial-delta-has-new" "NEWMARK missing"
@@ -170,8 +193,8 @@ test-cursor:
     t5_transcript="$TMPROOT/t5.jsonl"
     mk_transcript "$t5_transcript" 1 5 OLD
     printf 'a-OLD-5\n10\n%s\n' "$TMPROOT/nonexistent.jsonl" > "$WATCHDOG_DIR/cursor-${sid5}.txt"
-    rc=$(run_hook "$sid5" "$t5_transcript")
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "stale-transcript-exit" "expected 2 got $rc"; }
+    outcome=$(run_hook "$sid5" "$t5_transcript")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "stale-transcript-exit" "expected BLOCK got $outcome"; }
     grep -q "CURSOR: stale transcript path" "$TEST_LOG" || fail "stale-transcript-log" "no stale log"
     cleanup_session "$sid5"
     pass "stale-transcript"
@@ -187,8 +210,8 @@ test-cursor:
       mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t6_transcript"
       mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t6_transcript"
     done
-    rc=$(run_hook "$sid6" "$t6_transcript")
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "uuid-fallback-exit" "expected 2 got $rc"; }
+    outcome=$(run_hook "$sid6" "$t6_transcript")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "uuid-fallback-exit" "expected BLOCK got $outcome"; }
     condensed="$WATCHDOG_DIR/condensed-${sid6}.txt"
     if grep -q "OLDMARK" "$condensed"; then fail "uuid-fallback-isolation" "OLDMARK leaked despite fallback"; fi
     cleanup_session "$sid6"
@@ -201,8 +224,8 @@ test-cursor:
     mk_transcript "$t7_transcript" 1 5 OLD
     # Pre-create the marker dir to simulate an in-progress run
     mkdir -p "$WATCHDOG_DIR/${sid7}"
-    rc=$(run_hook "$sid7" "$t7_transcript")
-    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "concurrency-exit" "expected 0 got $rc"; }
+    outcome=$(run_hook "$sid7" "$t7_transcript")
+    [ "$outcome" = "SKIP" ] || { cat "$TEST_LOG"; fail "concurrency-exit" "expected SKIP got $outcome"; }
     grep -q "SKIP: concurrent run already in progress" "$TEST_LOG" || fail "concurrency-log" "no concurrent-run log"
     # The second invocation should not delete the marker dir it didn't acquire
     [ -d "$WATCHDOG_DIR/${sid7}" ] || fail "concurrency-marker-preserved" "marker dir was removed"
@@ -235,8 +258,8 @@ test-cursor:
       mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t9_transcript"
       mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t9_transcript"
     done
-    rc=$(run_hook "$sid9" "$t9_transcript")
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "malformed-cursor-exit" "expected 2 got $rc"; }
+    outcome=$(run_hook "$sid9" "$t9_transcript")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "malformed-cursor-exit" "expected BLOCK got $outcome"; }
     [ ! -f "$TMPROOT/pwned" ] || fail "malformed-cursor-injection" "shell injection succeeded: pwned file exists"
     grep -q "CURSOR: malformed uuid" "$TEST_LOG" || fail "malformed-cursor-log" "no malformed-uuid log"
     cleanup_session "$sid9"
@@ -251,8 +274,9 @@ test-cursor:
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     # First run: no cursor yet, should trigger
     rc=0
-    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "cooldown-first-run" "expected 2 got $rc"; }
+    out=$(echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "cooldown-first-run" "expected BLOCK got $outcome"; }
     # Append enough new tool uses to clear MIN_TOOL_USES
     for i in 1 2 3; do
       mk_msg user "u-COOL-$i" "COOL user $i" >> "$t10_transcript"
@@ -260,13 +284,15 @@ test-cursor:
     done
     # Second run: cursor mtime is fresh, cooldown=60s should skip
     rc=0
-    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "cooldown-second-run" "expected 0 got $rc"; }
+    out=$(echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "SKIP" ] || { cat "$TEST_LOG"; fail "cooldown-second-run" "expected SKIP got $outcome"; }
     grep -q "SKIP: cooldown active" "$TEST_LOG" || fail "cooldown-log" "no cooldown log"
     # Third run with cooldown=0 should trigger again, proving the gate is the only thing blocking
     rc=0
-    echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "cooldown-disabled" "expected 2 got $rc"; }
+    out=$(echo "$payload10" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "cooldown-disabled" "expected BLOCK got $outcome"; }
     cleanup_session "$sid10"
     pass "cooldown"
 
@@ -278,8 +304,9 @@ test-cursor:
     payload11=$(jq -n --arg sid "$sid11" --arg tp "$t11_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload11" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "userconfig-fallback" "expected 2 got $rc"; }
+    out=$(echo "$payload11" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "userconfig-fallback" "expected BLOCK got $outcome"; }
     cleanup_session "$sid11"
     pass "userconfig-fallback"
 
@@ -291,8 +318,9 @@ test-cursor:
     payload12=$(jq -n --arg sid "$sid12" --arg tp "$t12_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload12" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_DISABLED=true node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "userconfig-disabled" "expected 0 got $rc"; }
+    out=$(echo "$payload12" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_DISABLED=true node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "SKIP" ] || { cat "$TEST_LOG"; fail "userconfig-disabled" "expected SKIP got $outcome"; }
     grep -q "SKIP: disabled via configuration" "$TEST_LOG" || fail "userconfig-disabled-log" "no disabled log"
     cleanup_session "$sid12"
     pass "userconfig-disabled"
@@ -306,8 +334,9 @@ test-cursor:
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     # Legacy MIN_TOOL_USES=3 should win over CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999
     rc=0
-    echo "$payload13" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "legacy-overrides-plugin" "expected 2 got $rc (legacy var should win over plugin option)"; }
+    out=$(echo "$payload13" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "legacy-overrides-plugin" "expected BLOCK got $outcome (legacy var should win over plugin option)"; }
     cleanup_session "$sid13"
     pass "legacy-overrides-plugin"
 
@@ -320,8 +349,9 @@ test-cursor:
     payload14=$(jq -n --arg sid "$sid14" --arg tp "$t14_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload14" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_MAX_BYTES=512 CLAUDE_WATCHDOG_VERBOSE=1 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "verbose-trigger" "expected 2 got $rc"; }
+    out=$(echo "$payload14" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_MAX_BYTES=512 CLAUDE_WATCHDOG_VERBOSE=1 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "verbose-trigger" "expected BLOCK got $outcome"; }
     condensed14="$WATCHDOG_DIR/condensed-${sid14}.txt"
     [ -f "$condensed14" ] || fail "verbose-condensed-exists" "condensed file not found"
     grep -q "\\[TRUNCATED\\]" "$condensed14" || { cat "$condensed14"; fail "verbose-header" "truncation header not found in condensed output"; }
@@ -338,8 +368,9 @@ test-cursor:
     payload15=$(jq -n --arg sid "$sid15" --arg tp "$t15_transcript" --arg cwd "$t15_cwd" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload15" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "local-storage-exit" "expected 2 got $rc"; }
+    out=$(echo "$payload15" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "local-storage-exit" "expected BLOCK got $outcome"; }
     local_sessions="$t15_cwd/.claude/tmp/claude-watchdog/sessions"
     [ -f "$local_sessions/condensed-${sid15}.txt" ] || fail "local-storage-file" "condensed not in local path"
     if [ -f "$WATCHDOG_DIR/condensed-${sid15}.txt" ]; then fail "local-storage-global-leaked" "condensed found in global path"; fi
@@ -356,8 +387,9 @@ test-cursor:
     payload16=$(jq -n --arg sid "$sid16" --arg tp "$t16_transcript" --arg cwd "$TMPROOT/nonexistent-dir" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
-    echo "$payload16" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "2" ] || { cat "$TEST_LOG"; fail "local-fallback-exit" "expected 2 got $rc"; }
+    out=$(echo "$payload16" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$TEST_LOG"; fail "local-fallback-exit" "expected BLOCK got $outcome"; }
     [ -f "$WATCHDOG_DIR/condensed-${sid16}.txt" ] || fail "local-fallback-global" "condensed not in global path"
     grep -q "LOCAL_STORAGE: hook_cwd empty or invalid" "$TEST_LOG" || fail "local-fallback-log" "no fallback log"
     cleanup_session "$sid16"
@@ -371,8 +403,9 @@ test-cursor:
     payload17=$(jq -n --arg sid "$sid17" --arg tp "$t17_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", agent_id:"some-agent-id", agent_type:"general-purpose"}')
     rc=0
-    echo "$payload17" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "subagent-skip-exit" "expected 0 got $rc"; }
+    out=$(echo "$payload17" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "SKIP" ] || { cat "$TEST_LOG"; fail "subagent-skip-exit" "expected SKIP got $outcome"; }
     grep -q "SKIP: running inside subagent/teammate" "$TEST_LOG" || fail "subagent-skip-log" "no subagent skip log"
     [ ! -f "$WATCHDOG_DIR/condensed-${sid17}.txt" ] || fail "subagent-skip-no-condensed" "condensed file should not exist"
     cleanup_session "$sid17"
