@@ -428,6 +428,21 @@ test-cursor:
     cleanup_session "$sid18"
     pass "stop-hook-active"
 
+    # Positive control: the same substantial delta WITHOUT the flag must still trigger.
+    # Uses a dedicated log so the assertions can't match the skip run above.
+    sid18b="cursor-t18b-$$"
+    cleanup_session "$sid18b"
+    log18b="$TMPROOT/log-t18b"
+    payload18b=$(jq -n --arg sid "$sid18b" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:false}')
+    rc=0
+    echo "$payload18b" | CLAUDE_WATCHDOG_LOG="$log18b" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$log18b"; fail "stop-hook-active-positive-exit" "expected 0 got $rc"; }
+    grep -q "TRIGGER:" "$log18b" || { cat "$log18b"; fail "stop-hook-active-positive-trigger" "expected TRIGGER without the flag"; }
+    if grep -q "SKIP: stop_hook_active" "$log18b"; then fail "stop-hook-active-positive-no-skip" "must not skip when flag is absent/false"; fi
+    cleanup_session "$sid18b"
+    pass "stop-hook-active-positive"
+
     echo "--- all cursor tests passed ---"
 
 # Test the SubagentStop persistence hook
