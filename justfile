@@ -411,6 +411,23 @@ test-cursor:
     cleanup_session "$sid17"
     pass "subagent-teammate-skip"
 
+    # --- Test 18: stop_hook_active skip (re-trigger loop guard) ---
+    sid18="cursor-t18-$$"
+    cleanup_session "$sid18"
+    t18_transcript="$TMPROOT/t18.jsonl"
+    mk_transcript "$t18_transcript" 1 5 OLD
+    # Substantial delta that would otherwise fire, but stop_hook_active=true must short-circuit.
+    payload18=$(jq -n --arg sid "$sid18" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:true}')
+    rc=0
+    echo "$payload18" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "stop-hook-active-exit" "expected 0 got $rc"; }
+    grep -q "SKIP: stop_hook_active" "$TEST_LOG" || fail "stop-hook-active-log" "no stop_hook_active skip log"
+    [ ! -f "$WATCHDOG_DIR/condensed-${sid18}.txt" ] || fail "stop-hook-active-no-condensed" "condensed file should not exist"
+    [ ! -f "$WATCHDOG_DIR/cursor-${sid18}.txt" ] || fail "stop-hook-active-no-cursor" "cursor should not be created"
+    cleanup_session "$sid18"
+    pass "stop-hook-active"
+
     echo "--- all cursor tests passed ---"
 
 # Test the SubagentStop persistence hook
