@@ -212,6 +212,17 @@ try {
     process.exit(0);
   }
 
+  // When this Stop is itself the result of a previous Stop-hook continuation,
+  // Claude Code sets stop_hook_active=true. Without this guard, presenting the
+  // analysis and stopping re-enters the hook, which re-triggers the analyzer —
+  // a feedback loop that the cooldown only dampens, not prevents. This also
+  // covers the case where the Agent tool is unavailable (e.g. acceptEdits mode)
+  // and the model simply stops without running the analyzer.
+  if (event.stop_hook_active === true) {
+    log('SKIP: stop_hook_active is true (avoiding re-trigger loop)');
+    process.exit(0);
+  }
+
   if (hookCwd && existsSync(join(hookCwd, '.claude-watchdog-skip'))) {
     log(`SKIP: disabled via .claude-watchdog-skip in ${hookCwd}`);
     process.exit(0);
