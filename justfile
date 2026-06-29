@@ -19,7 +19,9 @@ smoke:
     session_id="smoketest-$$"
     # Default storage is project-local ($PWD/.claude); the hook receives cwd=$PWD below.
     sessions="$PWD/.claude/tmp/claude-watchdog/sessions"
-    trap 'rm -rf "$tmpdir"; rmdir "$sessions/${session_id}" 2>/dev/null || true; rm -f "$sessions/condensed-${session_id}.txt" "$sessions/raw-${session_id}.txt" "$sessions/cursor-${session_id}.txt" "$sessions/delta-${session_id}.tmp" "$HOME/.claude/logs/claude-watchdog-analyses/${session_id}-"*.md 2>/dev/null || true' EXIT
+    # The echo sentinel always lives in the global sessions dir (it must resolve before
+    # the local/global decision), so clean it from there regardless of local storage.
+    trap 'rm -rf "$tmpdir"; rmdir "$sessions/${session_id}" 2>/dev/null || true; rm -f "$sessions/condensed-${session_id}.txt" "$sessions/raw-${session_id}.txt" "$sessions/cursor-${session_id}.txt" "$sessions/delta-${session_id}.tmp" "$HOME/.claude/tmp/claude-watchdog/sessions/echo-${session_id}" "$HOME/.claude/logs/claude-watchdog-analyses/${session_id}-"*.md 2>/dev/null || true' EXIT
     transcript="$tmpdir/transcript.jsonl"
     for i in $(seq 1 5); do
       printf '{"type":"user","message":{"content":"do task %s"}}\n' "$i" >> "$transcript"
@@ -102,6 +104,7 @@ test-cursor:
             "$WATCHDOG_DIR/condensed-${sid}.txt" \
             "$WATCHDOG_DIR/raw-${sid}.txt" \
             "$WATCHDOG_DIR/delta-${sid}.tmp" \
+            "$WATCHDOG_DIR/echo-${sid}" \
             "$HOME/.claude/logs/claude-watchdog-analyses/${sid}-"*.md 2>/dev/null || true
       rmdir "$WATCHDOG_DIR/${sid}" 2>/dev/null || true
     }
@@ -411,98 +414,138 @@ test-cursor:
     cleanup_session "$sid17"
     pass "subagent-teammate-skip"
 
-    # --- Test 18: stop_hook_active skip (re-trigger loop guard) ---
+    # --- Test 18: echo-cycle (suppress our own analyzer echo exactly once) ---
     sid18="cursor-t18-$$"
     cleanup_session "$sid18"
     t18_transcript="$TMPROOT/t18.jsonl"
     mk_transcript "$t18_transcript" 1 5 OLD
-    # Substantial delta that would otherwise fire, but stop_hook_active=true must short-circuit.
-    payload18=$(jq -n --arg sid "$sid18" --arg tp "$t18_transcript" --arg cwd "$PWD" \
-      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:true}')
-    rc=0
-    echo "$payload18" | CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "0" ] || { cat "$TEST_LOG"; fail "stop-hook-active-exit" "expected 0 got $rc"; }
-    grep -q "SKIP: stop_hook_active" "$TEST_LOG" || fail "stop-hook-active-log" "no stop_hook_active skip log"
-    [ ! -f "$WATCHDOG_DIR/condensed-${sid18}.txt" ] || fail "stop-hook-active-no-condensed" "condensed file should not exist"
-    [ ! -f "$WATCHDOG_DIR/cursor-${sid18}.txt" ] || fail "stop-hook-active-no-cursor" "cursor should not be created"
-    cleanup_session "$sid18"
-    pass "stop-hook-active"
-
-    # Positive control: the same substantial delta WITHOUT the flag must still trigger.
-    # Uses a dedicated log so the assertions can't match the skip run above.
-    sid18b="cursor-t18b-$$"
-    cleanup_session "$sid18b"
-    log18b="$TMPROOT/log-t18b"
-    payload18b=$(jq -n --arg sid "$sid18b" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+    # Phase 1: substantial delta, fresh turn (stop_hook_active:false) -> TRIGGER and
+    # the self-owned echo sentinel must now exist.
+    log18p1="$TMPROOT/log-t18p1"
+    payload18p1=$(jq -n --arg sid "$sid18" --arg tp "$t18_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:false}')
     rc=0
-    echo "$payload18b" | CLAUDE_WATCHDOG_LOG="$log18b" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
-    [ "$rc" = "0" ] || { cat "$log18b"; fail "stop-hook-active-positive-exit" "expected 0 got $rc"; }
-    grep -q "TRIGGER:" "$log18b" || { cat "$log18b"; fail "stop-hook-active-positive-trigger" "expected TRIGGER without the flag"; }
-    if grep -q "SKIP: stop_hook_active" "$log18b"; then fail "stop-hook-active-positive-no-skip" "must not skip when flag is absent/false"; fi
-    cleanup_session "$sid18b"
-    pass "stop-hook-active-positive"
+    echo "$payload18p1" | CLAUDE_WATCHDOG_LOG="$log18p1" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$log18p1"; fail "echo-cycle-p1-exit" "expected 0 got $rc"; }
+    grep -q "TRIGGER:" "$log18p1" || { cat "$log18p1"; fail "echo-cycle-p1-trigger" "expected TRIGGER on the first (fresh) turn"; }
+    [ -f "$WATCHDOG_DIR/echo-${sid18}" ] || fail "echo-cycle-p1-sentinel" "echo sentinel not written after TRIGGER"
+    # Phase 2: same sid, the analyzer's resulting Stop carries stop_hook_active:true.
+    # Fresh log so the assertion can't match Phase 1. Cooldown=0 proves the echo
+    # sentinel (not the cooldown) is what suppresses this turn.
+    log18p2="$TMPROOT/log-t18p2"
+    payload18p2=$(jq -n --arg sid "$sid18" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:true}')
+    rc=0
+    echo "$payload18p2" | CLAUDE_WATCHDOG_LOG="$log18p2" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$log18p2"; fail "echo-cycle-p2-exit" "expected 0 got $rc"; }
+    grep -q "SKIP: our own analyzer echo" "$log18p2" || { cat "$log18p2"; fail "echo-cycle-p2-skip" "expected our-own-echo skip log"; }
+    if grep -q "TRIGGER:" "$log18p2"; then fail "echo-cycle-p2-no-trigger" "must not trigger on our own echo"; fi
+    [ ! -f "$WATCHDOG_DIR/echo-${sid18}" ] || fail "echo-cycle-p2-sentinel-cleared" "echo sentinel must be removed after the skip"
+    cleanup_session "$sid18"
+    pass "echo-cycle"
 
-    # --- Test 19: background_tasks in flight -> SKIP (session paused, not done) ---
+    # --- Test 19: foreign continuation still fires (encodes the #8 fix) ---
+    # stop_hook_active:true but NO echo sentinel => the continuation came from another
+    # plugin's Stop hook, not ours. The watchdog MUST NOT suppress it. (Under #8's
+    # flag-only guard this would have been wrongly skipped.)
     sid19="cursor-t19-$$"
     cleanup_session "$sid19"
+    t19_transcript="$TMPROOT/t19.jsonl"
+    mk_transcript "$t19_transcript" 1 5 OLD
     log19="$TMPROOT/log-t19"
-    # Substantial delta (same transcript Test 20 fires on), but a non-empty
-    # background_tasks array means the session is merely paused -> defer.
-    payload19=$(jq -n --arg sid "$sid19" --arg tp "$t18_transcript" --arg cwd "$PWD" \
-      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", background_tasks:[{type:"subagent",id:"a1"},{type:"shell",id:"s1"}]}')
+    payload19=$(jq -n --arg sid "$sid19" --arg tp "$t19_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:true}')
     rc=0
-    out=$(echo "$payload19" | CLAUDE_WATCHDOG_LOG="$log19" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
-    outcome=$(hook_outcome "$out" "$rc")
-    [ "$outcome" = "SKIP" ] || { cat "$log19"; fail "bg-tasks-skip-exit" "expected SKIP got $outcome"; }
-    grep -q "SKIP: 2 background task(s) in flight (subagent,shell)" "$log19" || { cat "$log19"; fail "bg-tasks-skip-log" "no background-task skip log"; }
-    [ ! -f "$WATCHDOG_DIR/condensed-${sid19}.txt" ] || fail "bg-tasks-no-condensed" "condensed file should not exist"
-    [ ! -f "$WATCHDOG_DIR/cursor-${sid19}.txt" ] || fail "bg-tasks-no-cursor" "cursor should not be created"
+    echo "$payload19" | CLAUDE_WATCHDOG_LOG="$log19" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$log19"; fail "foreign-continuation-exit" "expected 0 got $rc"; }
+    grep -q "TRIGGER:" "$log19" || { cat "$log19"; fail "foreign-continuation-trigger" "expected TRIGGER for a foreign continuation"; }
+    if grep -q "SKIP: our own analyzer echo" "$log19"; then fail "foreign-continuation-no-skip" "must not treat a foreign continuation as our echo"; fi
     cleanup_session "$sid19"
-    pass "background-tasks-skip"
+    pass "foreign-continuation"
 
-    # --- Test 20: background_tasks absent (old Claude Code) -> TRIGGER (feature-detect) ---
+    # --- Test 20: stale sentinel + fresh turn clears, then still fires ---
+    # A leftover sentinel (we blocked but the analyzer's echo Stop never arrived, e.g.
+    # the session closed). On a fresh end_turn it must be cleared, not treated as an
+    # echo, and the substantial delta must still TRIGGER.
     sid20="cursor-t20-$$"
     cleanup_session "$sid20"
+    t20_transcript="$TMPROOT/t20.jsonl"
+    mk_transcript "$t20_transcript" 1 5 OLD
+    printf 'stale-marker\n' > "$WATCHDOG_DIR/echo-${sid20}"
     log20="$TMPROOT/log-t20"
-    # No background_tasks field at all, as on Claude Code < 2.1.145: must behave as before.
-    payload20=$(jq -n --arg sid "$sid20" --arg tp "$t18_transcript" --arg cwd "$PWD" \
-      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    payload20=$(jq -n --arg sid "$sid20" --arg tp "$t20_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:false}')
     rc=0
-    out=$(echo "$payload20" | CLAUDE_WATCHDOG_LOG="$log20" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
-    outcome=$(hook_outcome "$out" "$rc")
-    [ "$outcome" = "BLOCK" ] || { cat "$log20"; fail "bg-tasks-absent-exit" "expected BLOCK got $outcome"; }
-    if grep -q "background task(s) in flight" "$log20"; then fail "bg-tasks-absent-no-skip" "must not skip when background_tasks is absent"; fi
+    echo "$payload20" | CLAUDE_WATCHDOG_LOG="$log20" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs >/dev/null 2>&1 || rc=$?
+    [ "$rc" = "0" ] || { cat "$log20"; fail "stale-sentinel-exit" "expected 0 got $rc"; }
+    grep -q "ECHO: stale sentinel cleared" "$log20" || { cat "$log20"; fail "stale-sentinel-log" "expected stale-sentinel-cleared log"; }
+    grep -q "TRIGGER:" "$log20" || { cat "$log20"; fail "stale-sentinel-trigger" "expected TRIGGER after clearing the stale sentinel"; }
+    # The stale sentinel was removed; the TRIGGER then writes a fresh timestamped one,
+    # so the file exists but no longer holds the stale marker.
+    if grep -q "stale-marker" "$WATCHDOG_DIR/echo-${sid20}" 2>/dev/null; then fail "stale-sentinel-not-cleared" "stale sentinel content survived"; fi
     cleanup_session "$sid20"
-    pass "background-tasks-absent-triggers"
+    pass "stale-sentinel"
 
-    # --- Test 21: opt-out (CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0) -> TRIGGER ---
+    # --- Test 21: background_tasks in flight -> SKIP (session paused, not done) ---
     sid21="cursor-t21-$$"
     cleanup_session "$sid21"
     log21="$TMPROOT/log-t21"
+    # Substantial delta (same transcript Test 22 fires on), but a non-empty
+    # background_tasks array means the session is merely paused -> defer.
     payload21=$(jq -n --arg sid "$sid21" --arg tp "$t18_transcript" --arg cwd "$PWD" \
-      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", background_tasks:[{type:"subagent",id:"a1"}]}')
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", background_tasks:[{type:"subagent",id:"a1"},{type:"shell",id:"s1"}]}')
     rc=0
-    out=$(echo "$payload21" | CLAUDE_WATCHDOG_LOG="$log21" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    out=$(echo "$payload21" | CLAUDE_WATCHDOG_LOG="$log21" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
     outcome=$(hook_outcome "$out" "$rc")
-    [ "$outcome" = "BLOCK" ] || { cat "$log21"; fail "bg-tasks-optout-exit" "expected BLOCK got $outcome (opt-out should let it fire)"; }
-    if grep -q "background task(s) in flight" "$log21"; then fail "bg-tasks-optout-no-skip" "must not skip when opted out"; fi
+    [ "$outcome" = "SKIP" ] || { cat "$log21"; fail "bg-tasks-skip-exit" "expected SKIP got $outcome"; }
+    grep -q "SKIP: 2 background task(s) in flight (subagent,shell)" "$log21" || { cat "$log21"; fail "bg-tasks-skip-log" "no background-task skip log"; }
+    [ ! -f "$WATCHDOG_DIR/condensed-${sid21}.txt" ] || fail "bg-tasks-no-condensed" "condensed file should not exist"
+    [ ! -f "$WATCHDOG_DIR/cursor-${sid21}.txt" ] || fail "bg-tasks-no-cursor" "cursor should not be created"
     cleanup_session "$sid21"
-    pass "background-tasks-opt-out"
+    pass "background-tasks-skip"
 
-    # --- Test 22: session cron already scheduled for the analyzer -> SKIP ---
+    # --- Test 22: background_tasks absent (old Claude Code) -> TRIGGER (feature-detect) ---
     sid22="cursor-t22-$$"
     cleanup_session "$sid22"
     log22="$TMPROOT/log-t22"
+    # No background_tasks field at all, as on Claude Code < 2.1.145: must behave as before.
     payload22=$(jq -n --arg sid "$sid22" --arg tp "$t18_transcript" --arg cwd "$PWD" \
-      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", session_crons:[{prompt:"/loop /analyze-session"}]}')
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
     rc=0
     out=$(echo "$payload22" | CLAUDE_WATCHDOG_LOG="$log22" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
     outcome=$(hook_outcome "$out" "$rc")
-    [ "$outcome" = "SKIP" ] || { cat "$log22"; fail "session-cron-skip-exit" "expected SKIP got $outcome"; }
-    grep -q "SKIP: analysis already scheduled via session cron" "$log22" || { cat "$log22"; fail "session-cron-skip-log" "no session-cron skip log"; }
-    [ ! -f "$WATCHDOG_DIR/condensed-${sid22}.txt" ] || fail "session-cron-no-condensed" "condensed file should not exist"
+    [ "$outcome" = "BLOCK" ] || { cat "$log22"; fail "bg-tasks-absent-exit" "expected BLOCK got $outcome"; }
+    if grep -q "background task(s) in flight" "$log22"; then fail "bg-tasks-absent-no-skip" "must not skip when background_tasks is absent"; fi
     cleanup_session "$sid22"
+    pass "background-tasks-absent-triggers"
+
+    # --- Test 23: opt-out (CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0) -> TRIGGER ---
+    sid23="cursor-t23-$$"
+    cleanup_session "$sid23"
+    log23="$TMPROOT/log-t23"
+    payload23=$(jq -n --arg sid "$sid23" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", background_tasks:[{type:"subagent",id:"a1"}]}')
+    rc=0
+    out=$(echo "$payload23" | CLAUDE_WATCHDOG_LOG="$log23" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$log23"; fail "bg-tasks-optout-exit" "expected BLOCK got $outcome (opt-out should let it fire)"; }
+    if grep -q "background task(s) in flight" "$log23"; then fail "bg-tasks-optout-no-skip" "must not skip when opted out"; fi
+    cleanup_session "$sid23"
+    pass "background-tasks-opt-out"
+
+    # --- Test 24: session cron already scheduled for the analyzer -> SKIP ---
+    sid24="cursor-t24-$$"
+    cleanup_session "$sid24"
+    log24="$TMPROOT/log-t24"
+    payload24=$(jq -n --arg sid "$sid24" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", session_crons:[{prompt:"/loop /analyze-session"}]}')
+    rc=0
+    out=$(echo "$payload24" | CLAUDE_WATCHDOG_LOG="$log24" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "SKIP" ] || { cat "$log24"; fail "session-cron-skip-exit" "expected SKIP got $outcome"; }
+    grep -q "SKIP: analysis already scheduled via session cron" "$log24" || { cat "$log24"; fail "session-cron-skip-log" "no session-cron skip log"; }
+    [ ! -f "$WATCHDOG_DIR/condensed-${sid24}.txt" ] || fail "session-cron-no-condensed" "condensed file should not exist"
+    cleanup_session "$sid24"
     pass "session-cron-skip"
 
     echo "--- all cursor tests passed ---"
