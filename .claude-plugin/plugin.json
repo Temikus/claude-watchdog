@@ -62,6 +62,12 @@
       "title": "Interactive recommendations",
       "description": "After session analysis, present actionable recommendations as an interactive multi-select prompt so you can choose which items to address. Selected items are saved to .claude/watchdog-todo.md",
       "default": false
+    },
+    "skip_with_background_tasks": {
+      "type": "boolean",
+      "title": "Skip while background tasks run",
+      "description": "Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a session that's truly done, not one that's merely paused. Requires Claude Code >= 2.1.145; a no-op on older versions. Default is true",
+      "default": true
     }
   }
 }
