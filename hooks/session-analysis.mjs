@@ -52,7 +52,7 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
           } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
@@ -196,6 +196,13 @@ try {
     process.exit(0);
   }
 
+  // One-shot self-owned sentinel. We drop this file whenever we block (trigger the
+  // analyzer), and the very next Stop that carries stop_hook_active=true is treated
+  // as our own analyzer echo and suppressed. It lives in GLOBAL_SESSIONS_DIR (created
+  // early, before the local/global SESSIONS_DIR decision) so it resolves identically
+  // on the block turn and the echo turn regardless of LOCAL_STORAGE.
+  const ECHO_FILE = join(GLOBAL_SESSIONS_DIR, `echo-${sessionId}`);
+
   if (event.agent_id) {
     log(`SKIP: running inside subagent/teammate (agent_id=${event.agent_id}, agent_type=${event.agent_type ?? 'unknown'})`);
     process.exit(0);
@@ -213,16 +220,29 @@ try {
     process.exit(0);
   }
 
-  // When this Stop is itself the result of a previous Stop-hook continuation,
-  // Claude Code sets stop_hook_active=true. Without this guard, presenting the
-  // analysis and stopping re-enters the hook, which re-triggers the analyzer —
-  // a feedback loop that the cooldown only dampens, not prevents. This also
-  // covers the case where the Agent tool is unavailable (e.g. acceptEdits mode)
-  // and the model simply stops without running the analyzer.
-  if (event.stop_hook_active === true) {
-    log('SKIP: stop_hook_active is true (avoiding re-trigger loop)');
+  // Suppress only the continuation that follows OUR OWN block, not every
+  // continuation. Claude Code sets stop_hook_active=true on any Stop that is itself
+  // the result of a Stop-hook block — including blocks from co-installed plugins
+  // (e.g. a "run tests before stopping" hook). Keying purely on that flag (as #8
+  // did) would make the watchdog silently never fire for users running such a
+  // plugin. So we only skip when stop_hook_active is set AND our own echo sentinel
+  // is present — proof the prior block was ours.
+  const weBlockedLast = existsSync(ECHO_FILE);
+  if (event.stop_hook_active === true && weBlockedLast) {
+    try { unlinkSync(ECHO_FILE); } catch { /* already gone */ }
+    log('SKIP: our own analyzer echo (stop_hook_active + echo sentinel)');
     process.exit(0);
   }
+  if (weBlockedLast && event.stop_hook_active !== true) {
+    // The continuation chain ended and the user did fresh work (this Stop is a real
+    // end_turn, not a continuation). Clear the stale sentinel so it can't suppress a
+    // genuine later echo, then proceed.
+    try { unlinkSync(ECHO_FILE); } catch { /* already gone */ }
+    log('ECHO: stale sentinel cleared (fresh turn, not a continuation)');
+  }
+  // stop_hook_active===true with NO sentinel => another plugin's continuation:
+  // do NOT skip here; fall through to the cooldown / cursor / MIN_TOOL_USES gates,
+  // which still prevent runaway re-triggering.
 
   // A non-empty background_tasks array means the session is paused with work
   // still in flight (a subagent, shell job, or workflow), not actually done.
@@ -446,6 +466,11 @@ ${postAnalysis}`;
       log('CURSOR: invalid last-uuid output, cursor unchanged');
     }
   }
+
+  // Drop the self-owned sentinel just before we block, so the analyzer's resulting
+  // Stop (which carries stop_hook_active=true) is recognized as our own echo and
+  // suppressed exactly once. Covers both the JSON-block and legacy exit-2 paths.
+  try { writeFileSync(ECHO_FILE, new Date().toISOString() + '\n'); } catch { /* sentinel best-effort; cooldown+cursor+MIN_TOOL_USES still gate the echo */ }
 
   if (useLegacyExit2) {
     process.stderr.write(instruction + '\n');

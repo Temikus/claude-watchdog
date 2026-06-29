@@ -76,7 +76,7 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - Watchdog is not disabled (via plugin config or `CLAUDE_WATCHDOG_DISABLED=1`)
 - No `.claude-watchdog-skip` file exists in the project root
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
-- `stop_hook_active` is not set — i.e. this Stop is not itself a continuation of a prior Stop-hook run (prevents the analyzer from re-triggering itself in a loop)
+- This Stop is not the watchdog's own analyzer echo (tracked via a per-session sentinel) — continuations triggered by other plugins' Stop hooks are not suppressed
 - No background tasks are in flight (subagents, shell jobs, workflows) — a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
 - No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) — avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
 - Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
