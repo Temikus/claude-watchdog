@@ -65,7 +65,7 @@ Run a short session and end Claude's turn. You should see output like:
 
 ## Requirements
 
-- **Claude Code** ≥ 1.0 (plugin support)
+- **Claude Code** ≥ 1.0 (plugin support). Background-task awareness — deferring analysis while a subagent, shell job, or workflow is still in flight — needs Claude Code ≥ 2.1.145; it is feature-detected, so on older versions the hook behaves exactly as before.
 - **Node.js** ≥ 18 (for the hook scripts)
 - **git** in the working directory you want analyzed (the agent runs `git diff` to compare intent vs. reality — sessions in non-git dirs still get a transcript-only review)
 
@@ -77,6 +77,8 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - No `.claude-watchdog-skip` file exists in the project root
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
 - `stop_hook_active` is not set — i.e. this Stop is not itself a continuation of a prior Stop-hook run (prevents the analyzer from re-triggering itself in a loop)
+- No background tasks are in flight (subagents, shell jobs, workflows) — a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
+- No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) — avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
 - Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
 - Transcript exists and has ≥ configured minimum tool calls (default 8) in the unanalyzed delta
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
@@ -98,6 +100,7 @@ with `/plugin configure claude-watchdog`:
 | Enable verbose mode | `false` | Prepend a diagnostics header to every condensed transcript and add truncation notices |
 | Store transcripts in project directory | `false` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
 | Max transcript size (bytes) | `51200` | Maximum size of the condensed transcript sent to the analyzer (4 KB – 500 KB) |
+| Skip while background tasks run | `true` | Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a finished session, not a paused one. Requires Claude Code ≥ 2.1.145; a no-op on older versions |
 
 ### Environment variable overrides
 
@@ -110,6 +113,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_DISABLED` | `0` | Set to `1` to disable the hook globally |
 | `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Override minimum tool calls threshold |
 | `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Override cooldown between analyses |
+| `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `1` | Set to `0` to analyze even while background tasks (subagents, shell jobs, workflows) are still in flight. **This flag also gates the session-cron dedup guard** (see below), so setting it to `0` re-enables analysis in both cases |
 
 ### Advanced overrides
 

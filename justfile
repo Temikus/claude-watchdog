@@ -443,6 +443,68 @@ test-cursor:
     cleanup_session "$sid18b"
     pass "stop-hook-active-positive"
 
+    # --- Test 19: background_tasks in flight -> SKIP (session paused, not done) ---
+    sid19="cursor-t19-$$"
+    cleanup_session "$sid19"
+    log19="$TMPROOT/log-t19"
+    # Substantial delta (same transcript Test 20 fires on), but a non-empty
+    # background_tasks array means the session is merely paused -> defer.
+    payload19=$(jq -n --arg sid "$sid19" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", background_tasks:[{type:"subagent",id:"a1"},{type:"shell",id:"s1"}]}')
+    rc=0
+    out=$(echo "$payload19" | CLAUDE_WATCHDOG_LOG="$log19" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "SKIP" ] || { cat "$log19"; fail "bg-tasks-skip-exit" "expected SKIP got $outcome"; }
+    grep -q "SKIP: 2 background task(s) in flight (subagent,shell)" "$log19" || { cat "$log19"; fail "bg-tasks-skip-log" "no background-task skip log"; }
+    [ ! -f "$WATCHDOG_DIR/condensed-${sid19}.txt" ] || fail "bg-tasks-no-condensed" "condensed file should not exist"
+    [ ! -f "$WATCHDOG_DIR/cursor-${sid19}.txt" ] || fail "bg-tasks-no-cursor" "cursor should not be created"
+    cleanup_session "$sid19"
+    pass "background-tasks-skip"
+
+    # --- Test 20: background_tasks absent (old Claude Code) -> TRIGGER (feature-detect) ---
+    sid20="cursor-t20-$$"
+    cleanup_session "$sid20"
+    log20="$TMPROOT/log-t20"
+    # No background_tasks field at all, as on Claude Code < 2.1.145: must behave as before.
+    payload20=$(jq -n --arg sid "$sid20" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    rc=0
+    out=$(echo "$payload20" | CLAUDE_WATCHDOG_LOG="$log20" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$log20"; fail "bg-tasks-absent-exit" "expected BLOCK got $outcome"; }
+    if grep -q "background task(s) in flight" "$log20"; then fail "bg-tasks-absent-no-skip" "must not skip when background_tasks is absent"; fi
+    cleanup_session "$sid20"
+    pass "background-tasks-absent-triggers"
+
+    # --- Test 21: opt-out (CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0) -> TRIGGER ---
+    sid21="cursor-t21-$$"
+    cleanup_session "$sid21"
+    log21="$TMPROOT/log-t21"
+    payload21=$(jq -n --arg sid "$sid21" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", background_tasks:[{type:"subagent",id:"a1"}]}')
+    rc=0
+    out=$(echo "$payload21" | CLAUDE_WATCHDOG_LOG="$log21" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "BLOCK" ] || { cat "$log21"; fail "bg-tasks-optout-exit" "expected BLOCK got $outcome (opt-out should let it fire)"; }
+    if grep -q "background task(s) in flight" "$log21"; then fail "bg-tasks-optout-no-skip" "must not skip when opted out"; fi
+    cleanup_session "$sid21"
+    pass "background-tasks-opt-out"
+
+    # --- Test 22: session cron already scheduled for the analyzer -> SKIP ---
+    sid22="cursor-t22-$$"
+    cleanup_session "$sid22"
+    log22="$TMPROOT/log-t22"
+    payload22=$(jq -n --arg sid "$sid22" --arg tp "$t18_transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", session_crons:[{prompt:"/loop /analyze-session"}]}')
+    rc=0
+    out=$(echo "$payload22" | CLAUDE_WATCHDOG_LOG="$log22" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 node hooks/session-analysis.mjs 2>/dev/null) || rc=$?
+    outcome=$(hook_outcome "$out" "$rc")
+    [ "$outcome" = "SKIP" ] || { cat "$log22"; fail "session-cron-skip-exit" "expected SKIP got $outcome"; }
+    grep -q "SKIP: analysis already scheduled via session cron" "$log22" || { cat "$log22"; fail "session-cron-skip-log" "no session-cron skip log"; }
+    [ ! -f "$WATCHDOG_DIR/condensed-${sid22}.txt" ] || fail "session-cron-no-condensed" "condensed file should not exist"
+    cleanup_session "$sid22"
+    pass "session-cron-skip"
+
     echo "--- all cursor tests passed ---"
 
 # Test the SubagentStop persistence hook

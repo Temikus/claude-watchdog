@@ -22,6 +22,7 @@ const CURSOR_TTL_DAYS = parseInt(process.env.CLAUDE_WATCHDOG_CURSOR_TTL_DAYS ?? 
 const COOLDOWN_SECONDS = parseInt(cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS', '600'), 10);
 const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
 const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
+const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -221,6 +222,30 @@ try {
   if (event.stop_hook_active === true) {
     log('SKIP: stop_hook_active is true (avoiding re-trigger loop)');
     process.exit(0);
+  }
+
+  // A non-empty background_tasks array means the session is paused with work
+  // still in flight (a subagent, shell job, or workflow), not actually done.
+  // Analyzing now would review a half-finished turn; the next clean Stop — once
+  // the background work settles — analyzes the whole thing. These fields arrive
+  // on the Stop input in Claude Code >= 2.1.145, so older versions (where the
+  // array is absent) feature-detect to a no-op and behave exactly as before.
+  const backgroundTasks = Array.isArray(event.background_tasks) ? event.background_tasks : [];
+  if ((SKIP_WITH_BG === '1' || SKIP_WITH_BG === 'true') && backgroundTasks.length > 0) {
+    const kinds = [...new Set(backgroundTasks.map(t => t.type))].join(',');
+    log(`SKIP: ${backgroundTasks.length} background task(s) in flight (${kinds}); deferring to a clean stop`);
+    process.exit(0);
+  }
+
+  // If a scheduled session cron is already set to run the analyzer (e.g. a user
+  // has `/loop /analyze-session` running), don't double up — let the cron do it.
+  // Gated behind the same opt-out as the background-task guard.
+  if (SKIP_WITH_BG === '1' || SKIP_WITH_BG === 'true') {
+    const crons = Array.isArray(event.session_crons) ? event.session_crons : [];
+    if (crons.some(c => /analyze-session|session-analyzer/i.test(c.prompt || ''))) {
+      log('SKIP: analysis already scheduled via session cron');
+      process.exit(0);
+    }
   }
 
   if (hookCwd && existsSync(join(hookCwd, '.claude-watchdog-skip'))) {
