@@ -8,6 +8,8 @@ import { homedir } from 'node:os';
 
 const LOG_FILE = process.env.CLAUDE_WATCHDOG_LOG ?? join(homedir(), '.claude/logs/claude-watchdog.log');
 const ANALYSES_DIR = process.env.CLAUDE_WATCHDOG_ANALYSES_DIR ?? join(homedir(), '.claude/logs/claude-watchdog-analyses');
+const WATCHDOG_TMP = process.env.CLAUDE_WATCHDOG_TMP ?? process.env.CLAUDE_PLUGIN_DATA ?? join(homedir(), '.claude/tmp/claude-watchdog');
+const GLOBAL_SESSIONS_DIR = join(WATCHDOG_TMP, 'sessions');
 
 mkdirSync(dirname(LOG_FILE), { recursive: true });
 mkdirSync(ANALYSES_DIR, { recursive: true });
@@ -31,6 +33,10 @@ try {
     log('SKIP: invalid session_id');
     process.exit(0);
   }
+
+  // The analyzer finishing releases the input hold, whether or not it produced a
+  // persistable message — so this must precede the empty-message early-exit.
+  try { unlinkSync(join(GLOBAL_SESSIONS_DIR, `pending-${sessionId}`)); } catch { /* not held or already gone */ }
 
   if (!message) {
     log(`SKIP: empty last_assistant_message for session=${sessionId}`);

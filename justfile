@@ -10,6 +10,7 @@ lint:
     node --check hooks/session-analysis.mjs
     node --check hooks/persist-analysis.mjs
     node --check hooks/cursor-slice.mjs
+    node --check hooks/hold-input.mjs
 
 # Smoke-test the hook with a synthetic Stop event
 smoke:
@@ -17,11 +18,12 @@ smoke:
     set -euo pipefail
     tmpdir=$(mktemp -d)
     session_id="smoketest-$$"
+    hold_sid="smokehold-$$"
     # Default storage is project-local ($PWD/.claude); the hook receives cwd=$PWD below.
     sessions="$PWD/.claude/tmp/claude-watchdog/sessions"
     # The echo sentinel always lives in the global sessions dir (it must resolve before
     # the local/global decision), so clean it from there regardless of local storage.
-    trap 'rm -rf "$tmpdir"; rmdir "$sessions/${session_id}" 2>/dev/null || true; rm -f "$sessions/condensed-${session_id}.txt" "$sessions/raw-${session_id}.txt" "$sessions/cursor-${session_id}.txt" "$sessions/delta-${session_id}.tmp" "$HOME/.claude/tmp/claude-watchdog/sessions/echo-${session_id}" "$HOME/.claude/logs/claude-watchdog-analyses/${session_id}-"*.md 2>/dev/null || true' EXIT
+    trap 'rm -rf "$tmpdir"; rmdir "$sessions/${session_id}" "$sessions/${hold_sid}" 2>/dev/null || true; rm -f "$sessions/condensed-${session_id}.txt" "$sessions/raw-${session_id}.txt" "$sessions/cursor-${session_id}.txt" "$sessions/delta-${session_id}.tmp" "$sessions/condensed-${hold_sid}.txt" "$sessions/raw-${hold_sid}.txt" "$sessions/cursor-${hold_sid}.txt" "$sessions/delta-${hold_sid}.tmp" "$HOME/.claude/tmp/claude-watchdog/sessions/echo-${session_id}" "$HOME/.claude/logs/claude-watchdog-analyses/${session_id}-"*.md "$HOME/.claude/logs/claude-watchdog-analyses/${hold_sid}-"*.md 2>/dev/null || true' EXIT
     transcript="$tmpdir/transcript.jsonl"
     for i in $(seq 1 5); do
       printf '{"type":"user","message":{"content":"do task %s"}}\n' "$i" >> "$transcript"
@@ -41,6 +43,19 @@ smoke:
     # Default protocol: analysis is signalled via a JSON `decision:block` on stdout with exit 0.
     [ "$rc" -eq 0 ] || { echo "FAIL: expected exit 0, got $rc"; exit 1; }
     echo "$out" | grep -q '"decision":"block"' || { echo "FAIL: expected decision:block on stdout"; exit 1; }
+    # Input-hold is opt-in: the default run above must not write a pending sentinel.
+    [ ! -f "$HOME/.claude/tmp/claude-watchdog/sessions/pending-${session_id}" ] || { echo "FAIL: pending sentinel written without opt-in"; exit 1; }
+    # With the option on, a trigger writes a timestamped pending sentinel. Use a
+    # hermetic CLAUDE_WATCHDOG_TMP so the sentinel lands in the tmpdir.
+    wtmp="$tmpdir/wtmp"
+    payload_hold=$(jq -n --arg sid "$hold_sid" --arg tp "$transcript" --arg cwd "$PWD" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    out_hold=$(echo "$payload_hold" | CLAUDE_WATCHDOG_LOG="$tmpdir/log" CLAUDE_WATCHDOG_TMP="$wtmp" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/session-analysis.mjs 2>/dev/null)
+    echo "$out_hold" | grep -q '"decision":"block"' || { echo "FAIL: hold-enabled run should still trigger"; exit 1; }
+    pending="$wtmp/sessions/pending-${hold_sid}"
+    [ -f "$pending" ] || { echo "FAIL: pending sentinel missing with CLAUDE_WATCHDOG_HOLD_INPUT=1"; exit 1; }
+    node -e 'const l = require("fs").readFileSync(process.argv[1], "utf8").split("\n")[0]; if (Number.isNaN(Date.parse(l))) process.exit(1);' "$pending" || { echo "FAIL: pending sentinel timestamp not parseable"; exit 1; }
+    echo "pending sentinel OK: $pending"
 
 # Cursor / delta-analysis behaviour tests
 test-cursor:
@@ -105,6 +120,7 @@ test-cursor:
             "$WATCHDOG_DIR/raw-${sid}.txt" \
             "$WATCHDOG_DIR/delta-${sid}.tmp" \
             "$WATCHDOG_DIR/echo-${sid}" \
+            "$WATCHDOG_DIR/pending-${sid}" \
             "$HOME/.claude/logs/claude-watchdog-analyses/${sid}-"*.md 2>/dev/null || true
       rmdir "$WATCHDOG_DIR/${sid}" 2>/dev/null || true
     }
@@ -472,6 +488,9 @@ test-cursor:
     t20_transcript="$TMPROOT/t20.jsonl"
     mk_transcript "$t20_transcript" 1 5 OLD
     printf 'stale-marker\n' > "$WATCHDOG_DIR/echo-${sid20}"
+    # A leftover input-hold sentinel must be cleared on the same stale path,
+    # regardless of whether the hold option is currently enabled.
+    printf 'stale-pending\n' > "$WATCHDOG_DIR/pending-${sid20}"
     log20="$TMPROOT/log-t20"
     payload20=$(jq -n --arg sid "$sid20" --arg tp "$t20_transcript" --arg cwd "$PWD" \
       '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", stop_hook_active:false}')
@@ -483,6 +502,7 @@ test-cursor:
     # The stale sentinel was removed; the TRIGGER then writes a fresh timestamped one,
     # so the file exists but no longer holds the stale marker.
     if grep -q "stale-marker" "$WATCHDOG_DIR/echo-${sid20}" 2>/dev/null; then fail "stale-sentinel-not-cleared" "stale sentinel content survived"; fi
+    [ ! -f "$WATCHDOG_DIR/pending-${sid20}" ] || fail "stale-pending-cleared" "stale pending sentinel survived the fresh turn"
     cleanup_session "$sid20"
     pass "stale-sentinel"
 
@@ -558,6 +578,9 @@ test-persist:
     trap 'rm -rf "$TMPROOT"' EXIT
     export CLAUDE_WATCHDOG_ANALYSES_DIR="$TMPROOT/analyses"
     export CLAUDE_WATCHDOG_LOG="$TMPROOT/log"
+    export CLAUDE_WATCHDOG_TMP="$TMPROOT/tmp"
+    SESSIONS="$CLAUDE_WATCHDOG_TMP/sessions"
+    mkdir -p "$SESSIONS"
 
     pass() { echo "PASS: $1"; }
     fail() { echo "FAIL: $1 - $2" >&2; exit 1; }
@@ -600,10 +623,102 @@ test-persist:
     grep -q "invalid session_id" "$CLAUDE_WATCHDOG_LOG" || fail "bad-sid" "no invalid-sid log"
     pass "invalid-session-id"
 
+    # --- Test 5: pending sentinel cleared on analyzer completion ---
+    sid5="persist-t5-$$"
+    touch "$SESSIONS/pending-${sid5}"
+    payload=$(jq -n --arg sid "$sid5" --arg msg "analysis text" \
+      '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:$msg}')
+    echo "$payload" | node hooks/persist-analysis.mjs
+    [ ! -f "$SESSIONS/pending-${sid5}" ] || fail "pending-cleared" "pending sentinel not removed"
+    pass "pending-cleared"
+
+    # --- Test 6: pending sentinel cleared even when the message is empty ---
+    sid6="persist-t6-$$"
+    touch "$SESSIONS/pending-${sid6}"
+    payload=$(jq -n --arg sid "$sid6" \
+      '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:""}')
+    echo "$payload" | node hooks/persist-analysis.mjs
+    [ ! -f "$SESSIONS/pending-${sid6}" ] || fail "pending-cleared-empty" "pending sentinel not removed on empty message"
+    pass "pending-cleared-empty-message"
+
     echo "--- all persist tests passed ---"
 
+# Test the UserPromptSubmit input-hold hook
+test-hold:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TMPROOT=$(mktemp -d)
+    trap 'rm -rf "$TMPROOT"' EXIT
+    export CLAUDE_WATCHDOG_TMP="$TMPROOT/tmp"
+    export CLAUDE_WATCHDOG_LOG="$TMPROOT/log"
+    SESSIONS="$CLAUDE_WATCHDOG_TMP/sessions"
+    mkdir -p "$SESSIONS"
+
+    pass() { echo "PASS: $1"; }
+    fail() { echo "FAIL: $1 - $2" >&2; exit 1; }
+
+    mk_payload() { jq -n --arg sid "$1" '{session_id:$sid, hook_event_name:"UserPromptSubmit", cwd:"/tmp"}'; }
+    now_iso() { node -e 'process.stdout.write(new Date().toISOString())'; }
+    # 400s in the past: safely beyond the 240s default TTL, portable across Linux/macOS
+    old_iso() { node -e 'process.stdout.write(new Date(Date.now() - 400000).toISOString())'; }
+
+    # --- Test 1: option off -> allow even with a fresh sentinel present ---
+    sid1="hold-t1-$$"
+    printf '%s\n' "$(now_iso)" > "$SESSIONS/pending-${sid1}"
+    out=$(mk_payload "$sid1" | node hooks/hold-input.mjs)
+    [ -z "$out" ] || fail "default-off" "expected empty stdout, got '$out'"
+    [ -f "$SESSIONS/pending-${sid1}" ] || fail "default-off-sentinel" "sentinel must be left untouched"
+    pass "default-off"
+
+    # --- Test 2: option on, no sentinel -> allow ---
+    sid2="hold-t2-$$"
+    out=$(mk_payload "$sid2" | CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/hold-input.mjs)
+    [ -z "$out" ] || fail "no-sentinel" "expected empty stdout, got '$out'"
+    pass "no-sentinel-allows"
+
+    # --- Test 3: fresh sentinel -> block and mark nudged ---
+    sid3="hold-t3-$$"
+    printf '%s\n' "$(now_iso)" > "$SESSIONS/pending-${sid3}"
+    out=$(mk_payload "$sid3" | CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/hold-input.mjs)
+    echo "$out" | grep -q '"decision":"block"' || fail "fresh-blocks" "expected decision:block, got '$out'"
+    sed -n '2p' "$SESSIONS/pending-${sid3}" | grep -qx 'nudged' || fail "fresh-nudged" "sentinel not marked nudged"
+    grep -q "HOLD: blocked prompt" "$CLAUDE_WATCHDOG_LOG" || fail "fresh-log" "no HOLD log"
+    pass "fresh-sentinel-blocks"
+
+    # --- Test 4: nudged sentinel -> next prompt overrides and releases ---
+    out=$(mk_payload "$sid3" | CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/hold-input.mjs)
+    [ -z "$out" ] || fail "override" "expected empty stdout, got '$out'"
+    [ ! -f "$SESSIONS/pending-${sid3}" ] || fail "override-cleared" "sentinel should be deleted"
+    grep -q "RELEASE: user override" "$CLAUDE_WATCHDOG_LOG" || fail "override-log" "no override log"
+    pass "override-releases"
+
+    # --- Test 5: expired sentinel -> TTL releases ---
+    sid5="hold-t5-$$"
+    printf '%s\n' "$(old_iso)" > "$SESSIONS/pending-${sid5}"
+    out=$(mk_payload "$sid5" | CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/hold-input.mjs)
+    [ -z "$out" ] || fail "ttl" "expected empty stdout, got '$out'"
+    [ ! -f "$SESSIONS/pending-${sid5}" ] || fail "ttl-cleared" "sentinel should be deleted"
+    grep -q "RELEASE: hold expired" "$CLAUDE_WATCHDOG_LOG" || fail "ttl-log" "no expiry log"
+    pass "ttl-expiry-releases"
+
+    # --- Test 6: fail-open on garbage stdin ---
+    rc=0
+    out=$(echo "not json" | CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/hold-input.mjs) || rc=$?
+    [ "$rc" -eq 0 ] || fail "fail-open-exit" "expected exit 0, got $rc"
+    [ -z "$out" ] || fail "fail-open-stdout" "expected empty stdout, got '$out'"
+    pass "fail-open"
+
+    # --- Test 7: invalid session_id -> allow, no shell injection surface ---
+    rc=0
+    out=$(jq -n '{session_id:"evil; rm -rf /"}' | CLAUDE_WATCHDOG_HOLD_INPUT=1 node hooks/hold-input.mjs) || rc=$?
+    [ "$rc" -eq 0 ] || fail "bad-sid-exit" "expected exit 0, got $rc"
+    [ -z "$out" ] || fail "bad-sid-stdout" "expected empty stdout, got '$out'"
+    pass "invalid-session-id"
+
+    echo "--- all hold tests passed ---"
+
 # Run all tests
-test: smoke test-cursor test-persist
+test: smoke test-cursor test-persist test-hold
 
 # Lint + all tests
 check: lint test
