@@ -60,6 +60,7 @@ Run a short session and end Claude's turn. You should see output like:
 | --- | --- | --- |
 | Stop hook | `hooks/session-analysis.mjs` | Preprocesses the transcript, triggers the analyzer |
 | SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk (no UI noise) |
+| UserPromptSubmit hook | `hooks/hold-input.mjs` | Optionally holds new prompts while an analysis is in flight |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
 | Slash command | `skills/analyze-session/SKILL.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
@@ -98,9 +99,10 @@ with `/plugin configure claude-watchdog`:
 | Minimum tool calls | `8` | Skip analysis if the session delta has fewer tool calls than this |
 | Cooldown (seconds) | `600` | Minimum seconds between analyses for the same session. Set to `0` to disable |
 | Enable verbose mode | `false` | Prepend a diagnostics header to every condensed transcript and add truncation notices |
-| Store transcripts in project directory | `false` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
+| Store transcripts in project directory | `true` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
 | Max transcript size (bytes) | `51200` | Maximum size of the condensed transcript sent to the analyzer (4 KB – 500 KB) |
 | Skip while background tasks run | `true` | Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a finished session, not a paused one. Requires Claude Code ≥ 2.1.145; a no-op on older versions |
+| Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
 
 ### Environment variable overrides
 
@@ -114,6 +116,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Override minimum tool calls threshold |
 | `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Override cooldown between analyses |
 | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `1` | Set to `0` to analyze even while background tasks (subagents, shell jobs, workflows) are still in flight. **This flag also gates the session-cron dedup guard** (see below), so setting it to `0` re-enables analysis in both cases |
+| `CLAUDE_WATCHDOG_HOLD_INPUT` | `0` | Set to `1` to hold newly submitted prompts while an analysis is in flight (see below) |
 
 ### Advanced overrides
 
@@ -129,6 +132,26 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
 | `CLAUDE_WATCHDOG_VERBOSE` | `0` | Set to `1` to include a truncation notice in condensed transcripts |
 | `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `1` | Set to `0` to store session files in the global plugin data path instead of the project directory |
+| `CLAUDE_WATCHDOG_HOLD_TTL_SECONDS` | `240` | How long the input hold blocks prompts before auto-releasing |
+
+### Holding input during analysis
+
+With **Hold input while analysis runs** enabled, the Stop hook drops a per-session
+`pending-` sentinel when it triggers the analyzer, and a `UserPromptSubmit` hook
+blocks any prompt submitted while that sentinel is fresh — useful when the analyzer
+gets backgrounded and the input box reopens before the analysis lands. A blocked
+prompt is not lost: press up-arrow to restore it. The hold releases when:
+
+- the analyzer finishes (the SubagentStop hook clears the sentinel), or
+- you **resubmit** — the first block marks the hold; the next prompt overrides it
+  (this is also the escape hatch after cancelling the analyzer with Esc/Ctrl-C,
+  since Claude Code fires no hook on cancellation), or
+- the TTL expires (`CLAUDE_WATCHDOG_HOLD_TTL_SECONDS`, default 240 s).
+
+Two caveats: a prompt that lands in the instant between the analyzer finishing and
+Claude presenting the analysis is not held (the analysis is already persisted to
+the analyses directory at that point), and the hook adds one Node cold-start
+(~30–80 ms) to every prompt submission while the plugin is installed.
 
 You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
 

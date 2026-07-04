@@ -68,6 +68,12 @@
       "title": "Skip while background tasks run",
       "description": "Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a session that's truly done, not one that's merely paused. Requires Claude Code >= 2.1.145; a no-op on older versions. Default is true",
       "default": true
+    },
+    "hold_input_during_analysis": {
+      "type": "boolean",
+      "title": "Hold input while analysis runs",
+      "description": "Block newly submitted prompts while a session analysis is still in flight, so they don't interleave with the pending analysis. A held prompt is recoverable with up-arrow; resubmitting overrides the hold. The hold auto-expires after 240 seconds. Default is false",
+      "default": false
     }
   }
 }

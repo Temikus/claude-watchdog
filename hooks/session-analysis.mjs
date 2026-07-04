@@ -23,6 +23,7 @@ const COOLDOWN_SECONDS = parseInt(cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUD
 const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
 const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
 const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
+const HOLD_INPUT = cfg('CLAUDE_WATCHDOG_HOLD_INPUT', 'CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS', '0');
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -52,7 +53,7 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta|echo)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo|pending)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
           } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
@@ -203,6 +204,16 @@ try {
   // on the block turn and the echo turn regardless of LOCAL_STORAGE.
   const ECHO_FILE = join(GLOBAL_SESSIONS_DIR, `echo-${sessionId}`);
 
+  // Companion sentinel for the input-hold option. Written when we trigger the
+  // analyzer; its presence tells the UserPromptSubmit hook (hold-input.mjs) to
+  // block new prompts until the analysis lands. Lives in GLOBAL_SESSIONS_DIR for
+  // the same reason as ECHO_FILE. NOTE: it must NOT be cleared on the echo-suppress
+  // turn below — that Stop fires exactly when the analyzer got backgrounded and the
+  // input box reopened, i.e. while the hold still needs to be active. It is cleared
+  // by persist-analysis.mjs when the analyzer completes, on the stale-sentinel path
+  // here, or by TTL in hold-input.mjs.
+  const PENDING_FILE = join(GLOBAL_SESSIONS_DIR, `pending-${sessionId}`);
+
   if (event.agent_id) {
     log(`SKIP: running inside subagent/teammate (agent_id=${event.agent_id}, agent_type=${event.agent_type ?? 'unknown'})`);
     process.exit(0);
@@ -238,6 +249,7 @@ try {
     // end_turn, not a continuation). Clear the stale sentinel so it can't suppress a
     // genuine later echo, then proceed.
     try { unlinkSync(ECHO_FILE); } catch { /* already gone */ }
+    try { unlinkSync(PENDING_FILE); } catch { /* already gone */ }
     log('ECHO: stale sentinel cleared (fresh turn, not a continuation)');
   }
   // stop_hook_active===true with NO sentinel => another plugin's continuation:
@@ -471,6 +483,10 @@ ${postAnalysis}`;
   // Stop (which carries stop_hook_active=true) is recognized as our own echo and
   // suppressed exactly once. Covers both the JSON-block and legacy exit-2 paths.
   try { writeFileSync(ECHO_FILE, new Date().toISOString() + '\n'); } catch { /* sentinel best-effort; cooldown+cursor+MIN_TOOL_USES still gate the echo */ }
+
+  if (HOLD_INPUT === '1' || HOLD_INPUT === 'true') {
+    try { writeFileSync(PENDING_FILE, new Date().toISOString() + '\n'); } catch { /* best-effort; without it the hold simply never engages */ }
+  }
 
   if (useLegacyExit2) {
     process.stderr.write(instruction + '\n');
