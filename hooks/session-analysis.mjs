@@ -462,7 +462,7 @@ Then stop.`;
   const instruction = `Please spawn a session-analyzer agent to critically analyze this session.
 
 Use the Agent tool with:
-- subagent_type: "session-analyzer"
+- subagent_type: "claude-watchdog:session-analyzer"
 - model: "sonnet"
 - prompt: "Read and analyze the condensed session transcript at '${safeCondensed}'. The working directory is '${safeCwd}'. Provide your critical analysis."
 
