@@ -198,7 +198,14 @@ export function condense(rawContent, maxBytes) {
   const userPart = clampUserLines(userLines, Math.floor(maxBytes / 5)).join('\n');
   const otherPart = takeLines(otherLines, Math.floor(maxBytes * 4 / 5), 'tail').lines.join('\n');
 
+  const droppedKb = Math.floor((rawSize - maxBytes) / 1024);
+
+  // The notice is unconditional, not verbose-only: without it a truncated file
+  // reads to the analyzer as a session that ended early, and it cannot tell that a
+  // missing instruction was elided rather than never given.
   const content = [
+    `[TRUNCATED] Original transcript was ${rawSize} bytes (~${droppedKb}KB dropped). Early context may be incomplete.`,
+    '',
     userPart,
     '',
     '--- [above: user messages in order, mid-turn ones labelled; below: recent tool calls and responses] ---',
@@ -206,7 +213,7 @@ export function condense(rawContent, maxBytes) {
     otherPart,
   ].join('\n');
 
-  return { content, rawSize, truncated: true, droppedKb: Math.floor((rawSize - maxBytes) / 1024) };
+  return { content, rawSize, truncated: true, droppedKb };
 }
 
 export function counts(content) {

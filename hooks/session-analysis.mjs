@@ -361,12 +361,9 @@ try {
   const verbose = cfg('CLAUDE_WATCHDOG_VERBOSE', 'CLAUDE_PLUGIN_OPTION_VERBOSE', '0');
   const isVerbose = verbose === '1' || verbose === 'true';
 
-  const { content, rawSize, truncated, droppedKb } = condense(rawContent, CONDENSED_MAX_BYTES);
+  // condense() prepends its own [TRUNCATED] notice when it trims, unconditionally.
+  const { content, rawSize } = condense(rawContent, CONDENSED_MAX_BYTES);
   let condensedContent = content;
-
-  if (isVerbose && truncated) {
-    condensedContent = `[TRUNCATED] Original transcript was ${rawSize} bytes (~${droppedKb}KB dropped). Early context may be incomplete.\n\n${condensedContent}`;
-  }
 
   if (isVerbose) {
     const { user, midTurn } = counts(condensedContent);

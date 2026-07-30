@@ -752,6 +752,9 @@ test-condense:
     clamped="$TMPROOT/clamped.txt"
     node hooks/condense.mjs condense "$many" 8192 > "$clamped"
     grep -q 'elided' "$clamped" || { head -5 "$clamped"; fail "clamp-marker" "expected an elision marker"; }
+    # The truncation notice must reach the analyzer with verbose off (the default),
+    # or a truncated transcript reads as a session that ended early.
+    grep -q '^\[TRUNCATED\]' "$clamped" || { head -3 "$clamped"; fail "clamp-notice" "no [TRUNCATED] notice without verbose mode"; }
     grep -q '^USER: ask number 1 - ' "$clamped" || fail "clamp-head" "first user message (session goal) dropped"
     grep -q '^USER: ask number 300 - ' "$clamped" || fail "clamp-tail" "last user message dropped - head-only slice regressed"
     pass "user-clamp-keeps-both-ends"
