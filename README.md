@@ -59,6 +59,7 @@ Run a short session and end Claude's turn. You should see output like:
 | Component | Path | Purpose |
 | --- | --- | --- |
 | Stop hook | `hooks/session-analysis.mjs` | Preprocesses the transcript, triggers the analyzer |
+| Condenser | `hooks/condense.mjs` | Turns the raw JSONL into the condensed transcript, within a byte budget |
 | SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk (no UI noise) |
 | UserPromptSubmit hook | `hooks/hold-input.mjs` | Optionally holds new prompts while an analysis is in flight |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
@@ -167,10 +168,26 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 
 1. Claude Code fires the `Stop` hook when a turn ends.
 2. `session-analysis.mjs` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
-3. It filters the JSONL transcript down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. Files older than 2 hours are cleaned up automatically in both locations.
+3. `condense.mjs` filters the JSONL transcript down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. The project directory is the nearest ancestor of the session's cwd holding `.git` or `.claude`, so a turn that ends with the shell inside a subdirectory still writes to one place per project. Files older than 2 hours are cleaned up automatically in both locations.
 4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
 6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.mjs` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
+
+### What the condensed transcript looks like
+
+One line per event, prefixed with its kind:
+
+| Prefix | Meaning |
+| --- | --- |
+| `USER:` | A prompt that started a turn |
+| `USER (mid-turn):` | A message typed while Claude was still working (Claude Code queues it, then injects it into the running turn). Authoritative user input — the analyzer weighs it the same as `USER:` |
+| `USER (mid-turn, origin=…):` | A queued prompt injected by automation (a cron, a hook) rather than by a person |
+| `USER (edited file):` | A file the user edited by hand during the session |
+| `ASSISTANT:` / `THINKING:` | Claude's replies and reasoning |
+| `TOOL_USE:` / `TOOL_RESULT:` | Tool calls and their results, truncated to 500 chars; `[ERROR]` marks failures |
+| `SYSTEM[…]:` | Everything else, including hook blocks and entry types the condenser doesn't know about |
+
+Pure session bookkeeping (window titles, PR links, mode pings, the last-prompt cache, queue enqueue/dequeue records) is dropped — it duplicates real message entries and otherwise crowds real content out of the byte budget. When the transcript busts the budget, user messages are kept ahead of tool traffic, and both ends of the user thread are kept (the opening goal and the most recent asks) rather than only the beginning.
 
 No data leaves your machine except through Claude Code's normal model calls.
 
