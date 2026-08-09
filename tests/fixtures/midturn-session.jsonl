@@ -1,0 +1,40 @@
+{"type":"user","uuid":"u-0001","message":{"content":"I want to add bazel-compatible caching as an experiment in the CI account."}}
+{"type":"assistant","uuid":"a-0001","message":{"content":[{"type":"thinking","thinking":"Look at the existing services first."},{"type":"tool_use","id":"toolu_01","name":"Glob","input":{"pattern":"**/*.yaml"}}]}}
+{"type":"user","uuid":"u-0002","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"catalog-info.yaml\npipeline.yaml"}]}}
+{"type":"last-prompt","lastPrompt":"I want to add bazel-compatible caching as an experiment in the CI account.","leafUuid":"u-0001","sessionId":"fixture-midturn"}
+{"type":"custom-title","customTitle":"Bazel-compatible caching options","sessionId":"fixture-midturn"}
+{"type":"ai-title","aiTitle":"Bazel remote cache onboarding","sessionId":"fixture-midturn"}
+{"type":"mode","mode":"normal","sessionId":"fixture-midturn"}
+{"type":"assistant","uuid":"a-0002","message":{"content":[{"type":"tool_use","id":"toolu_02","name":"Read","input":{"file_path":"catalog-info.yaml"}}]}}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-07-29T06:11:00.000Z","sessionId":"fixture-midturn","content":"You can check ../base-infrastructure-for-services for any permission changes needed."}
+{"type":"user","uuid":"u-0003","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_02","content":"apiVersion: backstage.io/v1alpha1"}]}}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-07-29T06:11:04.000Z","sessionId":"fixture-midturn","content":"You can check ../base-infrastructure-for-services for any permission changes needed."}
+{"parentUuid":"u-0003","isSidechain":false,"attachment":{"type":"queued_command","prompt":"You can check ../base-infrastructure-for-services for any permission changes needed.","source_uuid":"q-0001","commandMode":"prompt","origin":{"kind":"human"},"timestamp":"2026-07-29T06:11:00.000Z"},"type":"attachment","uuid":"at-0001","timestamp":"2026-07-29T06:11:00.000Z","userType":"external","cwd":"/repo","sessionId":"fixture-midturn","version":"2.1.219","gitBranch":"feat/remote-cache"}
+{"parentUuid":"at-0001","isSidechain":false,"attachment":{"type":"task_reminder","content":[],"itemCount":0},"type":"attachment","uuid":"at-0002","timestamp":"2026-07-29T06:11:05.000Z","sessionId":"fixture-midturn"}
+{"type":"assistant","uuid":"a-0003","message":{"content":[{"type":"tool_use","id":"toolu_03","name":"Grep","input":{"pattern":"iam","path":"../base-infrastructure-for-services"}}]}}
+{"type":"user","uuid":"u-0004","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_03","content":"iam.tf:12: resource \"aws_iam_role\""}]}}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-07-29T07:02:00.000Z","sessionId":"fixture-midturn","content":"Also - please base the changes on _recent_ additions, it looks like the GHA stuff is circa 2022."}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-07-29T07:02:03.000Z","sessionId":"fixture-midturn","content":"Also - please base the changes on _recent_ additions, it looks like the GHA stuff is circa 2022."}
+{"parentUuid":"u-0004","isSidechain":false,"attachment":{"type":"queued_command","prompt":"Also - please base the changes on _recent_ additions, it looks like the GHA stuff is circa 2022.","source_uuid":"q-0002","commandMode":"prompt","origin":{"kind":"human"},"timestamp":"2026-07-29T07:02:00.000Z"},"type":"attachment","uuid":"at-0003","timestamp":"2026-07-29T07:02:00.000Z","sessionId":"fixture-midturn"}
+{"type":"pr-link","sessionId":"fixture-midturn","prNumber":877,"prUrl":"https://example.invalid/org/repo/pull/877","prRepository":"org/repo","timestamp":"2026-07-29T07:34:29.380Z"}
+{"type":"assistant","uuid":"a-0004","message":{"content":[{"type":"text","text":"Renamed the stack components."},{"type":"tool_use","id":"toolu_04","name":"Edit","input":{"file_path":"stack.yaml"}}]}}
+{"type":"user","uuid":"u-0005","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_04","content":"edit failed: file not found","is_error":true}]}}
+{"parentUuid":"u-0005","isSidechain":false,"attachment":{"type":"queued_command","prompt":"Can you please rename stack components to the more generic `bre-remote-cache`? Or whatever acronym bazel remote execution prefers to use.","source_uuid":"q-0003","commandMode":"prompt","origin":{"kind":"human"},"timestamp":"2026-07-29T09:33:22.089Z"},"type":"attachment","uuid":"at-0004","timestamp":"2026-07-29T09:33:22.089Z","sessionId":"fixture-midturn"}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-07-29T09:41:00.000Z","sessionId":"fixture-midturn","content":"Also - please compare to other BIFS services within the same repo, so continuous-integration related, not base-infrastructure-for-services."}
+{"type":"assistant","uuid":"a-0005","message":{"content":[{"type":"tool_use","id":"toolu_05","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"user","uuid":"u-0006","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_05","content":"On branch feat/remote-cache"},{"type":"text","text":"Hold on - use the leaner shape, not the ci-athens one."}]}}
+{"type":"assistant","uuid":"a-0006","message":{"content":[{"type":"tool_use","id":"toolu_06","name":"Read","input":{"file_path":"pipeline.yaml"}}]}}
+{"type":"user","uuid":"u-0007","message":{"content":"The user sent a new message while you were working: Skip the GHA workflow entirely."}}
+{"parentUuid":"u-0007","isSidechain":false,"attachment":{"type":"edited_text_file","filename":"/repo/MAINTENANCE.md","snippet":"1\t# Maintenance\n2\t\n3\tThis file contains specific maintenance steps."},"type":"attachment","uuid":"at-0005","timestamp":"2026-07-29T09:50:00.000Z","sessionId":"fixture-midturn"}
+{"parentUuid":"at-0005","isSidechain":false,"attachment":{"type":"queued_command","prompt":"Scheduled follow-up: re-run the deploy check.","source_uuid":"q-0004","commandMode":"prompt","origin":{"kind":"cron"},"timestamp":"2026-07-29T09:55:00.000Z"},"type":"attachment","uuid":"at-0006","timestamp":"2026-07-29T09:55:00.000Z","sessionId":"fixture-midturn"}
+{"parentUuid":"at-0006","isSidechain":false,"attachment":{"type":"hook_blocking_error","hookName":"Stop","hookEvent":"Stop","blockingError":{"blockingError":"Please spawn a session-analyzer agent to critically analyze this session."}},"type":"attachment","uuid":"at-0007","timestamp":"2026-07-29T09:56:00.000Z","sessionId":"fixture-midturn"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-07-29T10:00:00.000Z","sessionId":"fixture-midturn","content":"Merged 6272. Can you inspect the comments on 877?"}
+{"type":"queue-operation","operation":"dequeue","timestamp":"2026-07-29T10:00:01.000Z","sessionId":"fixture-midturn","content":"Merged 6272. Can you inspect the comments on 877?"}
+{"type":"user","uuid":"u-0008","message":{"content":"Merged 6272. Can you inspect the comments on 877?"}}
+{"type":"assistant","uuid":"a-0007","message":{"content":[{"type":"tool_use","id":"toolu_07","name":"Bash","input":{"command":"gh pr view 877"}}]}}
+{"type":"user","uuid":"u-0009","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_07","content":"877 open"}]}}
+{"type":"assistant","uuid":"a-0008","message":{"content":[{"type":"tool_use","id":"toolu_08","name":"Bash","input":{"command":"gh pr diff 877"}}]}}
+{"type":"user","uuid":"u-0010","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_08","content":"diff --git a/stack.yaml b/stack.yaml"}]}}
+{"type":"assistant","uuid":"a-0009","message":{"content":[{"type":"text","text":"Done - the PR now uses the leaner shape."}]}}
+this line is not JSON and must be skipped
+{"type":"totally-unknown-future-type","uuid":"x-0001","payload":"kept as SYSTEM so a new user-bearing type is never invisible"}

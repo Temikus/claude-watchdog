@@ -3,9 +3,10 @@ import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
   statSync, unlinkSync, rmdirSync, existsSync, chmodSync
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, parse as parsePath, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
+import { extractTranscript, condense, counts } from './condense.mjs';
 
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
@@ -91,56 +92,29 @@ function truncateStrings(val, max) {
   return val;
 }
 
-function extractTranscript(lines) {
-  const output = [];
-  for (const line of lines) {
-    if (!line || line[0] !== '{') continue;
-    let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
-
-    if (obj.type === 'user') {
-      const content = obj.message?.content;
-      if (typeof content === 'string') {
-        output.push(`USER: ${content}`);
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'text') {
-            output.push(`USER: ${block.text}`);
-          } else if (block.type === 'tool_result') {
-            let text;
-            if (typeof block.content === 'string') {
-              text = block.content.slice(0, 500);
-            } else if (Array.isArray(block.content)) {
-              text = block.content
-                .filter(c => c.type === 'text')
-                .map(c => c.text)
-                .join('\n')
-                .slice(0, 500);
-            } else {
-              text = '(no content)';
-            }
-            output.push(`TOOL_RESULT: ${text}${block.is_error === true ? ' [ERROR]' : ''}`);
-          }
-        }
-      }
-    } else if (obj.type === 'assistant') {
-      const blocks = obj.message?.content;
-      if (Array.isArray(blocks)) {
-        for (const block of blocks) {
-          if (block.type === 'text') {
-            output.push(`ASSISTANT: ${block.text}`);
-          } else if (block.type === 'thinking') {
-            output.push(`THINKING: ${(block.thinking || '').slice(0, 300)}`);
-          } else if (block.type === 'tool_use') {
-            output.push(`TOOL_USE: ${block.name}(${JSON.stringify(block.input).slice(0, 500)})`);
-          }
-        }
-      }
-    } else {
-      output.push(`SYSTEM[${obj.type || 'unknown'}]: ${JSON.stringify(obj).slice(0, 200)}`);
-    }
+// Anchor project-local storage to the project root, not the shell's cwd at stop
+// time. A turn that ended with the shell inside a subdirectory used to scatter
+// condensed transcripts (and the delta cursor) into <repo>/<subdir>/.claude/tmp,
+// splitting one session's state across paths. The walk stops below $HOME so a
+// marker in the home directory can't hoist every project to the same place, and
+// returns startDir unchanged when nothing is found, preserving the old behaviour.
+function projectRoot(startDir) {
+  const home = resolve(homedir());
+  const start = resolve(startDir);
+  const { root } = parsePath(start);
+  let dir = start;
+  let claudeDir = null;
+  while (dir !== root && dir !== home) {
+    // .git decides the root. .claude is a weaker signal - it may be a stray
+    // directory an earlier run left in a subdirectory, which would otherwise keep
+    // re-anchoring there - so it only wins when there is no .git above at all.
+    if (existsSync(join(dir, '.git'))) return dir;
+    if (!claudeDir && existsSync(join(dir, '.claude'))) claudeDir = dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
-  return output.join('\n');
+  return claudeDir ?? start;
 }
 
 function countToolUses(lines) {
@@ -288,7 +262,9 @@ try {
   let SESSIONS_DIR = GLOBAL_SESSIONS_DIR;
   if (LOCAL_STORAGE === '1' || LOCAL_STORAGE === 'true') {
     if (hookCwd && hookCwd !== 'null' && existsSync(hookCwd)) {
-      const localDir = join(hookCwd, '.claude/tmp/claude-watchdog/sessions');
+      const rootDir = projectRoot(hookCwd);
+      if (rootDir !== resolve(hookCwd)) log(`LOCAL_STORAGE: anchored to project root ${rootDir} (cwd was ${hookCwd})`);
+      const localDir = join(rootDir, '.claude/tmp/claude-watchdog/sessions');
       try {
         mkdirSync(localDir, { recursive: true });
         chmodSync(localDir, 0o700);
@@ -382,45 +358,17 @@ try {
   const CONDENSED_FILE = join(SESSIONS_DIR, `condensed-${sessionId}.txt`);
 
   const rawContent = extractTranscript(deltaLines);
-  const rawSize = Buffer.byteLength(rawContent, 'utf8');
   const verbose = cfg('CLAUDE_WATCHDOG_VERBOSE', 'CLAUDE_PLUGIN_OPTION_VERBOSE', '0');
   const isVerbose = verbose === '1' || verbose === 'true';
 
-  let condensedContent;
-  if (rawSize <= CONDENSED_MAX_BYTES) {
-    condensedContent = rawContent;
-  } else {
-    const rawLines = rawContent.split('\n');
-    const userLines = rawLines.filter(l => l.startsWith('USER: '));
-    const otherLines = rawLines.filter(l => !l.startsWith('USER: '));
-
-    const USER_BUDGET = Math.floor(CONDENSED_MAX_BYTES / 5);
-    const OTHER_BUDGET = Math.floor(CONDENSED_MAX_BYTES * 4 / 5);
-    const droppedKb = Math.floor((rawSize - CONDENSED_MAX_BYTES) / 1024);
-
-    const userBuf = Buffer.from(userLines.join('\n'), 'utf8');
-    const otherBuf = Buffer.from(otherLines.join('\n'), 'utf8');
-
-    const userPart = userBuf.slice(0, USER_BUDGET).toString('utf8');
-    const otherPart = otherBuf.slice(-OTHER_BUDGET).toString('utf8');
-
-    const parts = [];
-    if (isVerbose) {
-      parts.push(`[TRUNCATED] Original transcript was ${rawSize} bytes (~${droppedKb}KB dropped). Early context may be incomplete.`);
-      parts.push('');
-    }
-    parts.push(userPart);
-    parts.push('');
-    parts.push('--- [above: user messages; below: recent tool calls and responses] ---');
-    parts.push('');
-    parts.push(otherPart);
-    condensedContent = parts.join('\n');
-  }
+  // condense() prepends its own [TRUNCATED] notice when it trims, unconditionally.
+  const { content, rawSize } = condense(rawContent, CONDENSED_MAX_BYTES);
+  let condensedContent = content;
 
   if (isVerbose) {
-    const userMsgCount = condensedContent.split('\n').filter(l => l.startsWith('USER: ')).length;
+    const { user, midTurn } = counts(condensedContent);
     const condensedSize = Buffer.byteLength(condensedContent, 'utf8');
-    condensedContent = `[DIAGNOSTICS] raw=${rawSize}B condensed=${condensedSize}B tool_uses=${toolUseCount} user_messages=${userMsgCount} delta_start=${deltaStart}\n\n${condensedContent}`;
+    condensedContent = `[DIAGNOSTICS] raw=${rawSize}B condensed=${condensedSize}B tool_uses=${toolUseCount} user_messages=${user} mid_turn_messages=${midTurn} delta_start=${deltaStart}\n\n${condensedContent}`;
   }
 
   if (!condensedContent || condensedContent.trim().length === 0) {

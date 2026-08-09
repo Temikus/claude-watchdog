@@ -27,7 +27,7 @@ Were there unnecessary detours, repeated failures, or wasted effort? Could the t
 Any concerns about the code, approaches, or information produced? Flag anything sloppy, hallucinated, or cargo-culted.
 
 ### Compliance
-Were any user instructions ignored or only partially followed? Were poor decisions made without flagging trade-offs? Were critical concerns raised by the user dismissed or handwaved away? Look for cases where Claude agreed too easily, skipped over risks, or failed to push back when it should have.
+Were any user instructions ignored or only partially followed? Were poor decisions made without flagging trade-offs? Were critical concerns raised by the user dismissed or handwaved away? Look for cases where Claude agreed too easily, skipped over risks, or failed to push back when it should have. Before flagging anything as unrequested, re-check for messages the user sent mid-turn while Claude was working - that is where corrections and extra asks arrive.
 
 ### Recommendations
 1-3 specific, actionable items for follow-up or improvement.
