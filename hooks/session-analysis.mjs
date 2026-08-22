@@ -3,7 +3,7 @@ import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
   statSync, unlinkSync, rmdirSync, existsSync, chmodSync
 } from 'node:fs';
-import { dirname, join, parse as parsePath, resolve } from 'node:path';
+import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
 import { extractTranscript, condense, counts } from './condense.mjs';
@@ -14,7 +14,7 @@ function cfg(watchdogVar, pluginVar, defaultVal) {
 
 const LOG_FILE = process.env.CLAUDE_WATCHDOG_LOG ?? join(homedir(), '.claude/logs/claude-watchdog.log');
 const MAX_LINES = parseInt(process.env.CLAUDE_WATCHDOG_LOG_MAX_LINES ?? '1000', 10);
-const MIN_TOOL_USES = parseInt(cfg('CLAUDE_WATCHDOG_MIN_TOOL_USES', 'CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES', '8'), 10);
+const MIN_TOOL_USES = parseInt(cfg('CLAUDE_WATCHDOG_MIN_TOOL_USES', 'CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES', '15'), 10);
 const CONDENSED_MAX_BYTES = parseInt(cfg('CLAUDE_WATCHDOG_MAX_BYTES', 'CLAUDE_PLUGIN_OPTION_MAX_TRANSCRIPT_BYTES', '51200'), 10);
 const WATCHDOG_TMP = process.env.CLAUDE_WATCHDOG_TMP ?? process.env.CLAUDE_PLUGIN_DATA ?? join(homedir(), '.claude/tmp/claude-watchdog');
 const GLOBAL_SESSIONS_DIR = join(WATCHDOG_TMP, 'sessions');
@@ -25,6 +25,7 @@ const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGI
 const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
 const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
 const HOLD_INPUT = cfg('CLAUDE_WATCHDOG_HOLD_INPUT', 'CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS', '0');
+const INCLUDE_RULES = cfg('CLAUDE_WATCHDOG_INCLUDE_RULES', 'CLAUDE_PLUGIN_OPTION_INCLUDE_RULES', '1');
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -117,20 +118,87 @@ function projectRoot(startDir) {
   return claudeDir ?? start;
 }
 
-function countToolUses(lines) {
-  let count = 0;
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const READ_ONLY_BASH = /^\s*(git diff|git log|git status|git show|ls|cat|grep|rg|find|head|tail|wc|sed -n)\b/;
+
+function parseLines(lines) {
+  const out = [];
   for (const line of lines) {
     if (!line || line[0] !== '{') continue;
-    try {
-      const obj = JSON.parse(line);
-      if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
-        for (const block of obj.message.content) {
-          if (block.type === 'tool_use') count++;
-        }
-      }
-    } catch { /* skip malformed lines */ }
+    try { out.push(JSON.parse(line)); } catch { /* skip malformed lines */ }
   }
-  return count;
+  return out;
+}
+
+// Top-level user message: string content, or a text block with no tool_result.
+function isUserMessage(obj) {
+  if (obj.type !== 'user') return false;
+  const c = obj.message?.content;
+  if (typeof c === 'string') return c.trim().length > 0;
+  if (!Array.isArray(c)) return false;
+  return c.some(b => b.type === 'text') && !c.some(b => b.type === 'tool_result');
+}
+
+function deltaStats(entries, baseDir) {
+  let toolUses = 0, userMessages = 0, edits = 0, mutatingBash = 0;
+  const files = new Set();
+  const addFile = (f) => {
+    if (typeof f !== 'string' || !f) return;
+    let p = f;
+    if (baseDir && f.startsWith('/')) {
+      const rel = relative(baseDir, f);
+      if (rel && !rel.startsWith('..')) p = rel;
+    }
+    files.add(p.replace(/\n/g, ''));
+  };
+  for (const obj of entries) {
+    if (isUserMessage(obj)) userMessages++;
+    if (obj.type === 'attachment' && obj.attachment?.type === 'edited_text_file') addFile(obj.attachment.filename);
+    if (obj.type !== 'assistant' || !Array.isArray(obj.message?.content)) continue;
+    for (const block of obj.message.content) {
+      if (block.type !== 'tool_use') continue;
+      toolUses++;
+      if (EDIT_TOOLS.has(block.name)) {
+        edits++;
+        addFile(block.input?.file_path ?? block.input?.notebook_path);
+      } else if (block.name === 'Bash' && !READ_ONLY_BASH.test(String(block.input?.command ?? ''))) {
+        mutatingBash++;
+      }
+    }
+  }
+  return { toolUses, userMessages, edits, mutatingBash, files: [...files] };
+}
+
+function latestAnalysis(sessionId) {
+  try {
+    const names = readdirSync(ANALYSES_DIR).filter(f => f.startsWith(`${sessionId}-`) && f.endsWith('.md')).sort();
+    return names.length ? join(ANALYSES_DIR, names[names.length - 1]) : null;
+  } catch { return null; }
+}
+
+// Project-first, then global. Skips files >8KB, caps the total at 16KB.
+function instructionFiles(rootDir) {
+  const candidates = [];
+  const rulesIn = (dir) => {
+    try {
+      return readdirSync(dir).filter(f => f.endsWith('.md')).sort().map(f => join(dir, f));
+    } catch { return []; }
+  };
+  if (rootDir) {
+    candidates.push(join(rootDir, 'CLAUDE.md'), ...rulesIn(join(rootDir, '.claude/rules')));
+  }
+  const home = homedir();
+  candidates.push(join(home, '.claude/CLAUDE.md'), ...rulesIn(join(home, '.claude/rules')));
+  const out = [];
+  let total = 0;
+  for (const f of candidates) {
+    let size;
+    try { size = statSync(f).size; } catch { continue; }
+    if (size > 8192 || total + size > 16384) { log(`RULES: skipped ${f} (${size}B, ${size > 8192 ? 'over 8KB' : 'total cap'})`); continue; }
+    total += size;
+    out.push(f);
+  }
+  return out;
 }
 
 let markerDir = null;
@@ -345,10 +413,19 @@ try {
   const deltaLines = allLines.slice(deltaStart - 1);
   writeFileSync(DELTA_FILE, deltaLines.join('\n'));
 
-  const toolUseCount = countToolUses(deltaLines);
-  log(`tool_use count (delta): ${toolUseCount}`);
+  const stats = deltaStats(parseLines(deltaLines), hookCwd);
+  const toolUseCount = stats.toolUses;
+  log(`tool_use count (delta): ${toolUseCount} (edits=${stats.edits} mutating_bash=${stats.mutatingBash} user_messages=${stats.userMessages})`);
   if (toolUseCount < MIN_TOOL_USES) {
     log(`SKIP: delta too small (${toolUseCount} < ${MIN_TOOL_USES}), cursor unchanged`);
+    process.exit(0);
+  }
+  if (stats.edits === 0 && stats.mutatingBash === 0) {
+    log('SKIP: delta has no file edits or mutating shell commands (read-only turn), cursor unchanged');
+    process.exit(0);
+  }
+  if (stats.userMessages === 0) {
+    log('SKIP: delta has no top-level user messages, cursor unchanged');
     process.exit(0);
   }
 
@@ -394,25 +471,41 @@ try {
   if (isInteractive) {
     postAnalysis = `Present the full analysis to the user.
 
-Then, extract the recommendations from the Recommendations section. Use the AskUserQuestion tool to present them as actionable options:
+Then, extract the recommendations from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
 - question: "Which recommendations would you like to address?"
 - header: "Actions"
 - multiSelect: true
-- For each recommendation, create an option with the bold title as the label and the description as the description
+- For each recommendation, create an option with the bold title as the label and a description that starts with its tag (e.g. "[code] ...")
 
-If the user selects any recommendations, save them as a markdown checklist to '${safeTodoPath}' (create the directory if needed). Format each selected item as an unchecked task: "- [ ] recommendation text". If the file already exists, overwrite it.
+If the user selects any recommendations, save them as a markdown checklist to '${safeTodoPath}' (create the directory if needed). Put selected [instruction] items under a "## Rules to add" heading and all other selected items under a "## Tasks" heading; omit an empty heading. Format each item as an unchecked task: "- [ ] recommendation text". If the file already exists, overwrite it.
 
 Then stop.`;
   } else {
     postAnalysis = 'Present the analysis to the user, then stop.';
   }
 
+  const hadCursor = Boolean(cursorUuid);
+  const prevAnalysis = latestAnalysis(sessionId);
+  const rulesOn = INCLUDE_RULES === '1' || INCLUDE_RULES === 'true';
+  const rules = rulesOn ? instructionFiles(hookCwd && existsSync(hookCwd) ? projectRoot(hookCwd) : null) : [];
+  const promptLines = [
+    `Read and analyze the condensed session transcript at '${safeCondensed}'. The working directory is '${safeCwd}'.`,
+    hadCursor
+      ? 'This is a continuation: the transcript covers only work since the previous analysis.'
+      : 'This is the first analysis for this session.',
+    `Files touched this slice: ${stats.files.length ? stats.files.join(', ') : 'none'}`,
+  ];
+  if (prevAnalysis) promptLines.push(`Previous analysis (optional context, read only if useful): ${prevAnalysis.replace(/\n/g, '')}`);
+  if (rules.length) promptLines.push(`User instruction files: ${rules.join(', ')}`);
+  promptLines.push('Provide your critical analysis.');
+  const safePrompt = promptLines.join('\n').replace(/"/g, "'");
+
   const instruction = `Please spawn a session-analyzer agent to critically analyze this session.
 
 Use the Agent tool with:
 - subagent_type: "claude-watchdog:session-analyzer"
 - model: "sonnet"
-- prompt: "Read and analyze the condensed session transcript at '${safeCondensed}'. The working directory is '${safeCwd}'. Provide your critical analysis."
+- prompt: "${safePrompt}"
 
 ${postAnalysis}`;
 

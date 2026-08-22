@@ -26,8 +26,8 @@
     "min_tool_uses": {
       "type": "number",
       "title": "Minimum tool calls",
-      "description": "Skip analysis if the session delta has fewer tool calls than this. Default is 8",
-      "default": 8,
+      "description": "Skip analysis if the session delta has fewer tool calls than this. Default is 15",
+      "default": 15,
       "min": 0
     },
     "cooldown_seconds": {
@@ -67,6 +67,12 @@
       "type": "boolean",
       "title": "Skip while background tasks run",
       "description": "Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a session that's truly done, not one that's merely paused. Requires Claude Code >= 2.1.145; a no-op on older versions. Default is true",
+      "default": true
+    },
+    "include_rules": {
+      "type": "boolean",
+      "title": "Pass instruction files to the analyzer",
+      "description": "Point the analyzer at CLAUDE.md and .claude/rules/*.md (project, then ~/.claude) so it can check the session against your own instructions. Files over 8 KB are skipped; the list is capped at 16 KB total. Default is true",
       "default": true
     },
     "hold_input_during_analysis": {
