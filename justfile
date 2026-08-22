@@ -29,7 +29,7 @@ smoke:
     transcript="$tmpdir/transcript.jsonl"
     for i in $(seq 1 5); do
       printf '{"type":"user","message":{"content":"do task %s"}}\n' "$i" >> "$transcript"
-      printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Working on task %s"},{"type":"tool_use","id":"toolu_%s","name":"Read","input":{"file_path":"/tmp/test"}}]}}\n' "$i" "$i" >> "$transcript"
+      printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Working on task %s"},{"type":"tool_use","id":"toolu_%s","name":"Edit","input":{"file_path":"/tmp/test","old_string":"a","new_string":"b"}}]}}\n' "$i" "$i" >> "$transcript"
       printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_%s","content":"file contents here"}]}}\n' "$i" >> "$transcript"
     done
     payload=$(jq -n --arg sid "$session_id" --arg tp "$transcript" --arg cwd "$PWD" \
@@ -45,6 +45,8 @@ smoke:
     # Default protocol: analysis is signalled via a JSON `decision:block` on stdout with exit 0.
     [ "$rc" -eq 0 ] || { echo "FAIL: expected exit 0, got $rc"; exit 1; }
     echo "$out" | grep -q '"decision":"block"' || { echo "FAIL: expected decision:block on stdout"; exit 1; }
+    echo "$out" | grep -q 'This is the first analysis for this session.' || { echo "FAIL: expected first-analysis marker in prompt"; exit 1; }
+    echo "$out" | grep -q 'Files touched this slice: /tmp/test' || { echo "FAIL: expected touched files in prompt"; exit 1; }
     # Input-hold is opt-in: the default run above must not write a pending sentinel.
     [ ! -f "$HOME/.claude/tmp/claude-watchdog/sessions/pending-${session_id}" ] || { echo "FAIL: pending sentinel written without opt-in"; exit 1; }
     # With the option on, a trigger writes a timestamped pending sentinel. Use a
@@ -76,7 +78,7 @@ test-cursor:
       if [ "$kind" = "user" ]; then
         jq -nc --arg u "$uuid" --arg t "$text" '{type:"user",uuid:$u,message:{content:$t}}'
       else
-        jq -nc --arg u "$uuid" --arg t "$text" '{type:"assistant",uuid:$u,message:{content:[{type:"text",text:$t},{type:"tool_use",id:("t_"+$u),name:"Read",input:{file_path:"/tmp/x"}}]}}'
+        jq -nc --arg u "$uuid" --arg t "$text" '{type:"assistant",uuid:$u,message:{content:[{type:"text",text:$t},{type:"tool_use",id:("t_"+$u),name:"Edit",input:{file_path:"/tmp/x",old_string:"a",new_string:"b"}}]}}'
       fi
     }
 

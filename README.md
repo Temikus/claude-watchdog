@@ -82,7 +82,9 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - No background tasks are in flight (subagents, shell jobs, workflows) — a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
 - No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) — avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
 - Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
-- Transcript exists and has ≥ configured minimum tool calls (default 8) in the unanalyzed delta
+- Transcript exists and has ≥ configured minimum tool calls (default 15) in the unanalyzed delta
+- The delta contains at least one file edit (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) or a non-read-only `Bash` command — read-only exploration turns are not reviewed
+- The delta contains at least one top-level user message
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
 - Condensed transcript is non-empty after filtering
 
@@ -97,12 +99,13 @@ with `/plugin configure claude-watchdog`:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | Disable watchdog | `false` | Set to `true` to disable automatic session analysis |
-| Minimum tool calls | `8` | Skip analysis if the session delta has fewer tool calls than this |
+| Minimum tool calls | `15` | Skip analysis if the session delta has fewer tool calls than this |
 | Cooldown (seconds) | `600` | Minimum seconds between analyses for the same session. Set to `0` to disable |
 | Enable verbose mode | `false` | Prepend a diagnostics header to every condensed transcript and add truncation notices |
 | Store transcripts in project directory | `true` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
 | Max transcript size (bytes) | `51200` | Maximum size of the condensed transcript sent to the analyzer (4 KB – 500 KB) |
 | Skip while background tasks run | `true` | Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a finished session, not a paused one. Requires Claude Code ≥ 2.1.145; a no-op on older versions |
+| Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/*.md` (project first, then `~/.claude`) so it can check the session against your own instructions. Files over 8 KB are skipped; the list is capped at 16 KB total |
 | Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
 
 ### Environment variable overrides
@@ -114,7 +117,8 @@ take priority over the plugin config. Set these in your shell profile or
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CLAUDE_WATCHDOG_DISABLED` | `0` | Set to `1` to disable the hook globally |
-| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `8` | Override minimum tool calls threshold |
+| `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `15` | Override minimum tool calls threshold |
+| `CLAUDE_WATCHDOG_INCLUDE_RULES` | `1` | Set to `0` to stop passing `CLAUDE.md` / `.claude/rules/*.md` paths to the analyzer |
 | `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Override cooldown between analyses |
 | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `1` | Set to `0` to analyze even while background tasks (subagents, shell jobs, workflows) are still in flight. **This flag also gates the session-cron dedup guard** (see below), so setting it to `0` re-enables analysis in both cases |
 | `CLAUDE_WATCHDOG_HOLD_INPUT` | `0` | Set to `1` to hold newly submitted prompts while an analysis is in flight (see below) |
