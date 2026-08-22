@@ -716,10 +716,22 @@ test-condense:
     grep -q 'SYSTEM\[totally-unknown-future-type\]' "$out" || fail "unknown-kept" "unknown entry type was dropped"
     pass "unknown-type-retained"
 
-    # --- Test 9: tool_result noise is still condensed, errors still flagged ---
-    grep -q '^TOOL_RESULT: On branch feat/remote-cache$' "$out" || fail "tool-result-kept" "tool_result not condensed into a TOOL_RESULT line"
-    grep -q '^TOOL_RESULT: edit failed: file not found \[ERROR\]$' "$out" || fail "tool-result-error" "tool_result error flag lost"
+    # --- Test 9: tool_result lines carry the tool name, errors still flagged ---
+    grep -q '^TOOL_RESULT\[Bash\]: On branch feat/remote-cache$' "$out" || fail "tool-result-kept" "tool_result not condensed into a TOOL_RESULT[Bash] line"
+    grep -q '^TOOL_RESULT\[Edit\]: edit failed: file not found \[ERROR\]$' "$out" || fail "tool-result-error" "tool_result error flag lost"
+    grep -q '^TOOL_RESULT: orphan result$' "$out" || fail "tool-result-unknown" "result with unknown tool_use_id should be unlabelled"
     pass "tool-result-condensing-intact"
+
+    # --- Test 9b: per-tool result caps (payload 1000 chars; cap + label + marker) ---
+    # result_len <marker> -> length of the payload after the label
+    result_len() { grep -F "$1" "$out" | sed 's/^TOOL_RESULT[^:]*: //; s/ \[ERROR\]$//' | awk '{print length($0)}'; }
+    [ "$(result_len 'READCAP')" = "80" ] || fail "cap-read" "Read result should be capped at 80, got $(result_len 'READCAP')"
+    [ "$(result_len 'BASHCAP')" = "800" ] || fail "cap-bash" "Bash result should be capped at 800, got $(result_len 'BASHCAP')"
+    [ "$(result_len 'WRITECAP')" = "500" ] || fail "cap-default" "Write result should be capped at 500, got $(result_len 'WRITECAP')"
+    [ "$(result_len 'WRITEERR')" = "800" ] || fail "cap-error" "is_error result should be capped at 800, got $(result_len 'WRITEERR')"
+    [ "$(result_len 'MCPCAP')" = "500" ] || fail "cap-mcp" "mcp__fs__Read must not get the Read cap, got $(result_len 'MCPCAP')"
+    grep -q '^TOOL_RESULT\[Write\]: WRITEERR .* \[ERROR\]$' "$out" || fail "cap-error-label" "error result lost its [Name] label or [ERROR] suffix"
+    pass "tool-result-per-tool-caps"
 
     # --- Test 10: under the byte budget, mid-turn lines survive tool-call flood ---
     # Mirrors the real session's shape: ~400KB of tool traffic, a few KB of user text,

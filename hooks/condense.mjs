@@ -6,6 +6,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const TOOL_RESULT_MAX = 500;
+// File-browsing output is bulk the analyzer never needs; shell output and errors
+// carry the failure detail it does.
+const TOOL_RESULT_MAX_BROWSE = 80;
+const TOOL_RESULT_MAX_VERBOSE = 800;
+const BROWSE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS']);
 const TOOL_INPUT_MAX = 500;
 const THINKING_MAX = 300;
 const SYSTEM_MAX = 200;
@@ -61,14 +66,21 @@ function midTurnLabel(origin) {
   return origin && origin !== 'human' ? `USER (mid-turn, origin=${origin})` : MIDTURN_LABEL;
 }
 
-function toolResultText(block) {
-  if (typeof block.content === 'string') return block.content.slice(0, TOOL_RESULT_MAX);
+function toolResultMax(name, isError) {
+  if (isError || name === 'Bash') return TOOL_RESULT_MAX_VERBOSE;
+  if (BROWSE_TOOLS.has(name)) return TOOL_RESULT_MAX_BROWSE;
+  return TOOL_RESULT_MAX;
+}
+
+function toolResultText(block, name) {
+  const max = toolResultMax(name, block.is_error === true);
+  if (typeof block.content === 'string') return block.content.slice(0, max);
   if (Array.isArray(block.content)) {
     return block.content
       .filter(c => c.type === 'text')
       .map(c => c.text)
       .join('\n')
-      .slice(0, TOOL_RESULT_MAX);
+      .slice(0, max);
   }
   return '(no content)';
 }
@@ -84,7 +96,13 @@ export function extractTranscript(lines) {
   // queue-operation path below is only a fallback for builds that don't log the
   // attachment, rather than a source of duplicates.
   const attachmentPrompts = new Set();
+  const toolNames = new Map(); // tool_use.id -> name, for per-tool result caps
   for (const obj of entries) {
+    if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
+      for (const b of obj.message.content) {
+        if (b.type === 'tool_use' && b.id) toolNames.set(b.id, b.name);
+      }
+    }
     if (obj.type === 'attachment' && obj.attachment?.type === 'queued_command') {
       const prompt = queuedPrompt(obj.attachment);
       if (prompt) attachmentPrompts.add(prompt);
@@ -107,7 +125,9 @@ export function extractTranscript(lines) {
             const label = (midTurn || MIDTURN_FRAMING.test(text)) ? MIDTURN_LABEL : 'USER';
             output.push(`${label}: ${text.replace(MIDTURN_FRAMING, '')}`);
           } else if (block.type === 'tool_result') {
-            output.push(`TOOL_RESULT: ${toolResultText(block)}${block.is_error === true ? ' [ERROR]' : ''}`);
+            const name = toolNames.get(block.tool_use_id);
+            const label = name ? `TOOL_RESULT[${name}]` : 'TOOL_RESULT';
+            output.push(`${label}: ${toolResultText(block, name)}${block.is_error === true ? ' [ERROR]' : ''}`);
           }
         }
       }
