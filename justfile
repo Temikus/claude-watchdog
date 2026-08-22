@@ -911,8 +911,19 @@ test-hold:
 
     echo "--- all hold tests passed ---"
 
+# Every transcript label condense.mjs emits must be documented in the analyzer prompt
+test-agent-prompt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    prompt="agents/session-analyzer.md"
+    rc=0
+    for label in 'USER' 'USER (mid-turn' 'USER (edited file)' 'ASSISTANT:' 'THINKING:' 'TOOL_USE:' 'TOOL_RESULT' 'SYSTEM[' '[TRUNCATED]'; do
+      if grep -qF -- "$label" "$prompt"; then echo "PASS: $label"; else echo "FAIL: $label missing from $prompt" >&2; rc=1; fi
+    done
+    exit $rc
+
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt
 
 # Lint + all tests
 check: lint test
