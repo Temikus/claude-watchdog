@@ -57,9 +57,11 @@ Verification rule: before calling output hallucinated or unverified, look for `T
 
 `### Recommendations` (mandatory): 1-3 items or the literal `none`. Only things the user can act on, format `**Title** [code|instruction|process]: one sentence naming the file or rule`. [code] = repo change, [instruction] = rule to add to CLAUDE.md/rules to prevent recurrence, [process] = workflow change. Praise or "keep doing X" is not a recommendation.
 
-Fast path: no findings -> Goals, then `### Recommendations` with `none`, stop.
+Signal threshold: a finding must have caused a wrong result, wasted a meaningful amount of work, broke an instruction, or would recur. Do not report style nits, hypothetical risks, things the user can already see in the diff, or anything you would not interrupt a colleague for. Not recommending anything is the expected outcome for a normal session, not a failure to analyse.
+
+Fast path: no findings that clear the threshold -> Goals, then `### Recommendations` with `none`, stop.
 
 Rules:
-- Be direct and critical, not flattering.
+- Be direct and critical, not flattering. Critical means accurate, not fault-finding.
 - Only comment on what actually happened, not hypotheticals.
 - ~40 words per finding, hard max 350 words total.
