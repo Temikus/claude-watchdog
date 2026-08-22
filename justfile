@@ -911,8 +911,29 @@ test-hold:
 
     echo "--- all hold tests passed ---"
 
+# Every transcript label condense.mjs emits must be documented in the analyzer prompt.
+# Labels are derived from the source, so a new output.push label fails here until the prompt covers it.
+test-agent-prompt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="hooks/condense.mjs"
+    prompt="agents/session-analyzer.md"
+    labels=$( {
+      # literal prefix of each output.push template, cut at the first ':' or '[' (inclusive)
+      grep -oE 'output\.push\(`[^`$]+' "$src" | sed -E 's/^output\.push\(`//; s/^([^:[]*[:[]).*/\1/'
+      # USER label string constants (USER, USER (mid-turn), ...)
+      grep -oE "'USER[^']*'" "$src" | tr -d "'"
+      grep -oE '`\[TRUNCATED\]' "$src" | tr -d '`'
+    } | sed 's/ *$//' | sort -u )
+    [ "$(echo "$labels" | wc -l)" -ge 8 ] || { echo "FAIL: label extraction found too few labels:"; echo "$labels"; exit 1; }
+    rc=0
+    while IFS= read -r label; do
+      if grep -qF -- "$label" "$prompt"; then echo "PASS: $label"; else echo "FAIL: $label missing from $prompt" >&2; rc=1; fi
+    done <<< "$labels"
+    exit $rc
+
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt
 
 # Lint + all tests
 check: lint test
