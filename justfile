@@ -720,19 +720,21 @@ test-condense:
 
     # --- Test 9: tool_result lines carry the tool name, errors still flagged ---
     grep -q '^TOOL_RESULT\[Bash\]: On branch feat/remote-cache$' "$out" || fail "tool-result-kept" "tool_result not condensed into a TOOL_RESULT[Bash] line"
-    grep -q '^TOOL_RESULT\[Edit\]: edit failed: file not found \[ERROR\]$' "$out" || fail "tool-result-error" "tool_result error flag lost"
+    # [ERROR] belongs in the label: a Bash/error body runs to 800 chars, so a suffix
+    # is read only after the content the call never actually produced.
+    grep -q '^TOOL_RESULT\[Edit\]\[ERROR\]: edit failed: file not found$' "$out" || fail "tool-result-error" "tool_result error flag lost or not in the label"
     grep -q '^TOOL_RESULT: orphan result$' "$out" || fail "tool-result-unknown" "result with unknown tool_use_id should be unlabelled"
     pass "tool-result-condensing-intact"
 
     # --- Test 9b: per-tool result caps (payload 1000 chars; cap + label + marker) ---
     # result_len <marker> -> length of the payload after the label
-    result_len() { grep -F "$1" "$out" | sed 's/^TOOL_RESULT[^:]*: //; s/ \[ERROR\]$//' | awk '{print length($0)}'; }
+    result_len() { grep -F "$1" "$out" | sed 's/^TOOL_RESULT[^:]*: //' | awk '{print length($0)}'; }
     [ "$(result_len 'READCAP')" = "80" ] || fail "cap-read" "Read result should be capped at 80, got $(result_len 'READCAP')"
     [ "$(result_len 'BASHCAP')" = "800" ] || fail "cap-bash" "Bash result should be capped at 800, got $(result_len 'BASHCAP')"
     [ "$(result_len 'WRITECAP')" = "500" ] || fail "cap-default" "Write result should be capped at 500, got $(result_len 'WRITECAP')"
     [ "$(result_len 'WRITEERR')" = "800" ] || fail "cap-error" "is_error result should be capped at 800, got $(result_len 'WRITEERR')"
     [ "$(result_len 'MCPCAP')" = "500" ] || fail "cap-mcp" "mcp__fs__Read must not get the Read cap, got $(result_len 'MCPCAP')"
-    grep -q '^TOOL_RESULT\[Write\]: WRITEERR .* \[ERROR\]$' "$out" || fail "cap-error-label" "error result lost its [Name] label or [ERROR] suffix"
+    grep -q '^TOOL_RESULT\[Write\]\[ERROR\]: WRITEERR ' "$out" || fail "cap-error-label" "error result lost its [Name] label or [ERROR] marker"
     pass "tool-result-per-tool-caps"
 
     # --- Test 10: under the byte budget, mid-turn lines survive tool-call flood ---
@@ -925,7 +927,8 @@ test-hold:
 
     echo "--- all hold tests passed ---"
 
-# Every transcript label condense.mjs emits must be documented in the analyzer prompt.
+# Every transcript label condense.mjs emits must be documented in the analyzer prompt,
+# and the prompt assembly must hand the analyzer the final assistant message.
 # Labels are derived from the source, so a new output.push label fails here until the prompt covers it.
 test-agent-prompt:
     #!/usr/bin/env bash
@@ -944,6 +947,50 @@ test-agent-prompt:
     while IFS= read -r label; do
       if grep -qF -- "$label" "$prompt"; then echo "PASS: $label"; else echo "FAIL: $label missing from $prompt" >&2; rc=1; fi
     done <<< "$labels"
+
+    # --- The condensed file the hook writes must end with the final assistant message ---
+    # The delta ends on tool results, so without this the analyzer is asked to judge
+    # whether the deliverable was produced while never being shown it.
+    TMPROOT=$(mktemp -d)
+    trap 'rm -rf "$TMPROOT"' EXIT
+    FIXTURE="tests/fixtures/midturn-session.jsonl"
+    HEADER='=== FINAL ASSISTANT MESSAGE (session ended here) ==='
+    FINAL_TEXT='Renamed the stack components to bre-remote-cache and pushed the branch.'
+
+    run_hook() { # run_hook <session-id> <payload-json> -> echoes condensed file path
+      local sid="$1" payload="$2" tmp="$TMPROOT/w-$1"
+      echo "$payload" | CLAUDE_WATCHDOG_LOG="$TMPROOT/hook-$sid.log" CLAUDE_WATCHDOG_TMP="$tmp" \
+        CLAUDE_WATCHDOG_ANALYSES_DIR="$TMPROOT/analyses" CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=0 \
+        CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+        node hooks/session-analysis.mjs >/dev/null 2>&1
+      echo "$tmp/sessions/condensed-${sid}.txt"
+    }
+
+    sid="final-msg-$$"
+    cwd="$TMPROOT/project"; mkdir -p "$cwd"
+    payload=$(jq -n --arg sid "$sid" --arg tp "$FIXTURE" --arg cwd "$cwd" --arg msg "$FINAL_TEXT" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", last_assistant_message:$msg}')
+    f=$(run_hook "$sid" "$payload")
+    [ -f "$f" ] || { cat "$TMPROOT/hook-$sid.log"; echo "FAIL: hook wrote no condensed file" >&2; rc=1; }
+    if [ -f "$f" ]; then
+      grep -qF "$HEADER" "$f" || { echo "FAIL: condensed file missing the final-message header" >&2; rc=1; }
+      grep -qF "$FINAL_TEXT" "$f" || { echo "FAIL: final assistant message not in condensed file" >&2; rc=1; }
+      # must be the tail, after the tool traffic - not buried mid-transcript
+      tail -3 "$f" | grep -qF "$FINAL_TEXT" || { tail -5 "$f"; echo "FAIL: final message is not at the end of the file" >&2; rc=1; }
+      grep -qF "$HEADER" "$prompt" || { echo "FAIL: $HEADER undocumented in $prompt" >&2; rc=1; }
+      if [ "$rc" = "0" ]; then echo "PASS: $HEADER"; fi
+    fi
+
+    # Absent from the event -> no empty header stanza.
+    sid2="final-msg-none-$$"
+    payload2=$(jq -n --arg sid "$sid2" --arg tp "$FIXTURE" --arg cwd "$cwd" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn"}')
+    f2=$(run_hook "$sid2" "$payload2")
+    if [ -f "$f2" ] && grep -qF "$HEADER" "$f2"; then
+      echo "FAIL: header emitted with no last_assistant_message" >&2; rc=1
+    else
+      echo "PASS: no final-message header when the event carries none"
+    fi
     exit $rc
 
 # Run all tests
