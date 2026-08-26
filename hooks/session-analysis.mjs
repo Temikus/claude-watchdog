@@ -442,6 +442,14 @@ try {
   const { content, rawSize } = condense(rawContent, CONDENSED_MAX_BYTES);
   let condensedContent = content;
 
+  // The delta ends on tool results, so the concluding turn - the deliverable the
+  // analyzer must judge - is absent. Appended after condense() so it is never
+  // truncated away.
+  const finalMsg = event.last_assistant_message ?? '';
+  if (finalMsg.trim()) {
+    condensedContent += `\n\n=== FINAL ASSISTANT MESSAGE (session ended here) ===\n${finalMsg}\n`;
+  }
+
   if (isVerbose) {
     const { user, midTurn } = counts(condensedContent);
     const condensedSize = Buffer.byteLength(condensedContent, 'utf8');

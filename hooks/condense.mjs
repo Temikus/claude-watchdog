@@ -126,8 +126,10 @@ export function extractTranscript(lines) {
             output.push(`${label}: ${text.replace(MIDTURN_FRAMING, '')}`);
           } else if (block.type === 'tool_result') {
             const name = toolNames.get(block.tool_use_id);
-            const label = name ? `TOOL_RESULT[${name}]` : 'TOOL_RESULT';
-            output.push(`${label}: ${toolResultText(block, name)}${block.is_error === true ? ' [ERROR]' : ''}`);
+            // [ERROR] goes in the label, not after a body that can run 800 chars:
+            // the reader must see the failure before the content it did not produce.
+            const label = `${name ? `TOOL_RESULT[${name}]` : 'TOOL_RESULT'}${block.is_error === true ? '[ERROR]' : ''}`;
+            output.push(`${label}: ${toolResultText(block, name)}`);
           }
         }
       }

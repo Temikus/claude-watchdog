@@ -188,8 +188,9 @@ One line per event, prefixed with its kind:
 | `USER (mid-turn, origin=…):` | A queued prompt injected by automation (a cron, a hook) rather than by a person |
 | `USER (edited file):` | A file the user edited by hand during the session |
 | `ASSISTANT:` / `THINKING:` | Claude's replies and reasoning |
-| `TOOL_USE:` / `TOOL_RESULT:` | Tool calls and their results, truncated to 500 chars; `[ERROR]` marks failures |
+| `TOOL_USE:` / `TOOL_RESULT:` | Tool calls and their results, truncated to 500 chars; a failed or refused call is labelled `TOOL_RESULT[Name][ERROR]:` so the failure is read before the body |
 | `SYSTEM[…]:` | Everything else, including hook blocks and entry types the condenser doesn't know about |
+| `=== FINAL ASSISTANT MESSAGE (session ended here) ===` | Claude's concluding turn, appended after condensation so it is never truncated away — without it the transcript ends on tool results and the deliverable is invisible to the analyzer |
 
 Pure session bookkeeping (window titles, PR links, mode pings, the last-prompt cache, queue enqueue/dequeue records) is dropped — it duplicates real message entries and otherwise crowds real content out of the byte budget. When the transcript busts the budget, user messages are kept ahead of tool traffic, and both ends of the user thread are kept (the opening goal and the most recent asks) rather than only the beginning.
 
