@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/Temikus/claude-watchdog",
   "repository": "https://github.com/Temikus/claude-watchdog",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "session",
     "analysis",

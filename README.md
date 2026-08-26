@@ -227,4 +227,4 @@ See `justfile` for the full list.
 
 ## License
 
-MIT.
+Apache 2.0. See [LICENSE](LICENSE).
