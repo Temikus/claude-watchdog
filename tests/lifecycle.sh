@@ -75,7 +75,9 @@ oc=$(stop_run "life-rotate-$$" "$TRANSCRIPT" CLAUDE_WATCHDOG_LOG_MAX_LINES=100 C
 grep -q "LOG ROTATED (was 50[0-9] lines)" "$LOG" || { cat "$LOG"; fail "log-rotation-line" "no LOG ROTATED line"; }
 lines=$(wc -l < "$LOG" | tr -d ' ')
 # 100 kept + the ROTATED line + the handful this run appends afterwards.
-[ "$lines" -ge 100 ] && [ "$lines" -le 115 ] || fail "log-rotation-size" "expected ~100 lines, got $lines"
+if [ "$lines" -lt 100 ] || [ "$lines" -gt 115 ]; then
+  fail "log-rotation-size" "expected ~100 lines, got $lines"
+fi
 grep -q "filler line 1$" "$LOG" && fail "log-rotation-head" "oldest lines were not dropped"
 grep -q "filler line 500" "$LOG" || fail "log-rotation-tail" "newest kept lines were dropped"
 pass "log-rotation"
