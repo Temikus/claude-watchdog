@@ -1,0 +1,20 @@
+# Every label prefix the condensed-transcript grammar emits.
+#
+# This list is the contract between the condenser and agents/session-analyzer.md:
+# tests/agent-prompt.sh asserts each entry appears verbatim in the analyzer
+# prompt, so a label the analyzer has never been told about fails the suite.
+#
+# It used to be derived by grepping `output.push(` out of hooks/condense.mjs,
+# which tied the test to the implementation language. Adding a label to the
+# condenser now means adding it here and documenting it in the prompt.
+#
+# One label per line. Blank lines and lines starting with # are ignored;
+# trailing whitespace is significant, so entries are trimmed on read.
+[TRUNCATED]
+ASSISTANT:
+SYSTEM[
+THINKING:
+TOOL_USE:
+USER
+USER (edited file):
+USER (mid-turn)

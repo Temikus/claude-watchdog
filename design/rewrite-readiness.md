@@ -36,31 +36,37 @@ then start the port with a parity job as the merge gate.
 Do this before writing any code in the new language. The point is one suite
 that runs unchanged against both implementations.
 
-- [ ] Parametrise the hook binaries. Introduce `HOOK_STOP`, `HOOK_HOLD`, and
+- [x] Parametrise the hook binaries. Introduce `HOOK_STOP`, `HOOK_HOLD`, and
       `HOOK_PERSIST` env vars, defaulting to `node hooks/session-analysis.mjs`
       etc. Every invocation in the tests goes through them. The parity run is
       then `HOOK_STOP=./bin/watchdog-stop ... just test`.
-- [ ] Move the cases out of `justfile` into `tests/*.sh` with a shared
+- [x] Move the cases out of `justfile` into `tests/*.sh` with a shared
       `tests/lib.sh` (`run_stop`, `outcome`, `mk_transcript`, `fail`). The
       1100-line justfile hides which lines are harness and which are assertions,
       and `just test-<name>` should stay as thin wrappers.
-- [ ] Replace the node-coupled tests:
-  - [ ] `test-cursor` Test 1 drives `cursor-slice.mjs slice|last-uuid`
+- [x] Replace the node-coupled tests:
+  - [x] `test-cursor` Test 1 drives `cursor-slice.mjs slice|last-uuid`
         directly. Internal API. Drop it: Tests 4, 5, and 6 cover the same
         behaviour end to end through the Stop hook.
-  - [ ] `test-condense` drives `condense.mjs extract|condense`. Worth keeping
+  - [x] `test-condense` drives `condense.mjs extract|condense`. Worth keeping
         as a stable, documented debug CLI (`<binary> condense <jsonl> [bytes]`)
         because it is useful for humans debugging a bad analysis too. Decide,
         then document it in the contract (section 5).
-  - [ ] `test-agent-prompt` greps `output.push(\`` in the JS to derive the
+        Decided: kept and promoted to a supported interface. The decision and
+        the exact wire format are written up in `tests/CONDENSE-CLI.md` for the
+        contract station to fold into `design/contract.md`.
+  - [x] `test-agent-prompt` greps `output.push(\`` in the JS to derive the
         transcript labels. Breaks on day one of a port. Replace with an explicit
         `tests/labels.txt` listing every label and assert both that each appears
         in `agents/session-analyzer.md` and that each appears in the golden
         condensed output (so the list cannot go stale).
-  - [ ] `lint` uses `node --check` and `node -e` for fixture validation. Swap
+        `tests/labels.txt` lands with the prompt assertion. The second half -
+        asserting each label against the golden condensed output - waits on the
+        section 2 goldens; add it there so the list cannot go stale.
+  - [x] `lint` uses `node --check` and `node -e` for fixture validation. Swap
         the fixture check to `jq -c . < fixture` per line; the syntax check
         becomes whatever the target language's compiler does.
-- [ ] Make `smoke` hermetic. It currently writes to the real `$PWD/.claude/tmp`
+- [x] Make `smoke` hermetic. It currently writes to the real `$PWD/.claude/tmp`
       because the hook receives `cwd=$PWD`. Use a mktemp cwd like every other
       test.
 
@@ -207,11 +213,12 @@ test is a gap.
 
 ## 6. CI
 
-- [ ] Add `macos-latest` to the matrix now, before the port. Development
+- [x] Add `macos-latest` to the matrix now, before the port. Development
       happens on macOS and CI runs Ubuntu only; `stat`, `mktemp`, and `date`
       differ. The suite must be proven portable before it is asked to prove
       something else.
-- [ ] `shellcheck` on `tests/*.sh` once extracted, and `just --fmt --check`.
+- [x] `shellcheck` on `tests/*.sh` once extracted, and `just --fmt --check`.
+      Both run from `just lint`, so `just check` and CI cover them.
 - [ ] One-off coverage run (`NODE_V8_COVERAGE` + `c8`) over the bash suite to
       get the real branch list for section 3. Do not keep it in CI.
 - [ ] Parity job during migration: matrix over `impl: [node, <new>]`, both must
@@ -224,34 +231,51 @@ test is a gap.
       reworked for the new target. Also confirm the installed plugin keeps the
       exec bit (that doc notes it can be lost) via `just install-dev` on both
       OSes.
-- [ ] Perf budget tests in `tests/perf.sh`: the hold hook runs on every prompt
+- [x] Perf budget tests in `tests/perf.sh`: the hold hook runs on every prompt
       (README claims 30-80 ms), so assert < 100 ms; the Stop hook on a 5 MB
       transcript < 2 s. Measure before and after, since startup time is likely
       a motivation for the port.
+      Wired as `just test-perf`, deliberately outside `just test` and CI: the
+      100 ms budget is within noise of Node's startup on a shared runner.
+      Node baseline on an M-series laptop: hold ~70-95 ms (best of 10),
+      Stop on 5.3 MB ~210 ms.
 
 ## 7. Documentation drift
 
-- [ ] README "How it works" step 4 says exit 2 + stderr. The default has been
-      exit 0 + JSON `decision: block` since backlog item 1 landed.
-- [ ] README Requirements say Node >= 18; the CI floor is 20. Pick one.
-- [ ] README gate list order differs from the code (section 5).
-- [ ] README "Session has not already been analyzed (marker ... auto-expires
+- [x] README "How it works" step 4 says exit 2 + stderr. The default has been
+      exit 0 + JSON `decision: block` since backlog item 1 landed. Fixed; the
+      legacy mode is documented as the `CLAUDE_WATCHDOG_LEGACY_HOOK` opt-in.
+- [x] README Requirements say Node >= 18; the CI floor is 20. Picked 20. There
+      is no `package.json`, so no `engines` field to reconcile.
+- [x] README gate list order differs from the code (section 5). Re-derived from
+      `session-analysis.mjs`; the session-id and `agent_id` gates were missing
+      entirely.
+- [x] README "Session has not already been analyzed (marker ... auto-expires
       after 2 hours)" describes the concurrency lock but reads as once-per-
-      session.
-- [ ] `design/unhack.md` starts at item 2 (item 1 was removed) and the
+      session. Reworded: the marker is a per-run lock released on exit, and the
+      cooldown is what spaces repeat analyses.
+- [x] `design/unhack.md` starts at item 2 (item 1 was removed) and the
       sequencing table still references item 1.
-- [ ] `design/backlog.md` item 1 is done but still listed HIGH; item 2
+- [x] `design/backlog.md` item 1 is done but still listed HIGH; item 2
       duplicates `unhack.md` item 5.
-- [ ] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
+- [x] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
       but fix 3 (both user-thread ends, unconditional notice, line-boundary
       cuts) shipped in `condense.mjs`. Fixes 2 (goal anchor for deltas) and 4
       (non-git sessions) remain real gaps and belong in the port's scope
-      decision.
-- [ ] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
+      decision. Fix 5 is covered by `max_transcript_bytes`.
+- [x] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
       (300 vs 350 words, mandatory vs conditional sections, no transcript
-      legend). Align them or note that the difference is intentional.
-- [ ] `plugin.json` description carries no runtime requirement. Add one once
-      the binary/runtime story is decided.
+      legend). Aligned; the missing legend is now stated as deliberate, since
+      the skill reads the live conversation rather than a condensed file.
+- [x] `plugin.json` description carries no runtime requirement. Names the Node
+      20 floor now; revisit when the binary/runtime story is decided.
+
+Found while fixing the above, not previously listed:
+
+- [x] README said the `.claude-watchdog-skip` file is looked for "in any project
+      root". The hook checks the session's `cwd`, not the walked project root.
+- [x] `CLAUDE_WATCHDOG_LEGACY_HOOK` was undocumented anywhere. Now in the
+      advanced-overrides table.
 
 ---
 
