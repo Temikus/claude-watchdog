@@ -19,15 +19,29 @@ function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
 }
 
+// parseInt('abc') is NaN, and every comparison against NaN is false - so a typo
+// in a numeric setting used to silently disable the gate it feeds. Fall back to
+// the documented default and say so in the log. Warnings are buffered because
+// this runs before the log directory exists.
+const CONFIG_WARNINGS = [];
+function intCfg(label, raw, defaultVal) {
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n)) {
+    CONFIG_WARNINGS.push(`CONFIG: ${label}='${raw}' is not a number, using default ${defaultVal}`);
+    return defaultVal;
+  }
+  return n;
+}
+
 const LOG_FILE = process.env.CLAUDE_WATCHDOG_LOG ?? join(homedir(), '.claude/logs/claude-watchdog.log');
-const MAX_LINES = parseInt(process.env.CLAUDE_WATCHDOG_LOG_MAX_LINES ?? '1000', 10);
-const MIN_TOOL_USES = parseInt(cfg('CLAUDE_WATCHDOG_MIN_TOOL_USES', 'CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES', '15'), 10);
-const CONDENSED_MAX_BYTES = parseInt(cfg('CLAUDE_WATCHDOG_MAX_BYTES', 'CLAUDE_PLUGIN_OPTION_MAX_TRANSCRIPT_BYTES', '51200'), 10);
+const MAX_LINES = intCfg('CLAUDE_WATCHDOG_LOG_MAX_LINES', process.env.CLAUDE_WATCHDOG_LOG_MAX_LINES ?? '1000', 1000);
+const MIN_TOOL_USES = intCfg('MIN_TOOL_USES', cfg('CLAUDE_WATCHDOG_MIN_TOOL_USES', 'CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES', '15'), 15);
+const CONDENSED_MAX_BYTES = intCfg('MAX_TRANSCRIPT_BYTES', cfg('CLAUDE_WATCHDOG_MAX_BYTES', 'CLAUDE_PLUGIN_OPTION_MAX_TRANSCRIPT_BYTES', '51200'), 51200);
 const WATCHDOG_TMP = process.env.CLAUDE_WATCHDOG_TMP ?? process.env.CLAUDE_PLUGIN_DATA ?? join(homedir(), '.claude/tmp/claude-watchdog');
 const GLOBAL_SESSIONS_DIR = join(WATCHDOG_TMP, 'sessions');
 const ANALYSES_DIR = process.env.CLAUDE_WATCHDOG_ANALYSES_DIR ?? join(homedir(), '.claude/logs/claude-watchdog-analyses');
-const CURSOR_TTL_DAYS = parseInt(process.env.CLAUDE_WATCHDOG_CURSOR_TTL_DAYS ?? '7', 10);
-const COOLDOWN_SECONDS = parseInt(cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS', '600'), 10);
+const CURSOR_TTL_DAYS = intCfg('CLAUDE_WATCHDOG_CURSOR_TTL_DAYS', process.env.CLAUDE_WATCHDOG_CURSOR_TTL_DAYS ?? '7', 7);
+const COOLDOWN_SECONDS = intCfg('COOLDOWN_SECONDS', cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS', '600'), 600);
 const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
 const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
 const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
@@ -218,6 +232,7 @@ process.on('exit', () => {
 
 try {
   mkdirSync(dirname(LOG_FILE), { recursive: true });
+  for (const w of CONFIG_WARNINGS) log(w);
   mkdirSync(WATCHDOG_TMP, { recursive: true });
   chmodSync(WATCHDOG_TMP, 0o700);
   mkdirSync(GLOBAL_SESSIONS_DIR, { recursive: true });
