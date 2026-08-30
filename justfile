@@ -58,6 +58,18 @@ test-agent-prompt:
 test-perf:
     bash tests/perf.sh
 
+# --- section 2: goldens (rewrite/goldens) ---------------------------------
+
+# Byte-exact goldens vs the current implementation
+test-golden:
+    bash tests/golden.sh
+
+# Regenerate every golden. Commit the diff with the behaviour change that caused it.
+golden-regen:
+    GOLDEN_REGEN=1 bash tests/golden.sh
+
+# --- end section 2 --------------------------------------------------------
+
 # --- rewrite/coverage-config ------------------------------------------------
 
 # Config parsing, storage resolution, and on-disk permissions
@@ -71,7 +83,7 @@ test-lifecycle:
 # --- end rewrite/coverage-config --------------------------------------------
 
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-config test-lifecycle
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-golden test-config test-lifecycle
 
 # Lint + all tests
 check: lint test

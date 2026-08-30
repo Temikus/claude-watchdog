@@ -1,0 +1,1 @@
+[<TIMESTAMP>] SKIP: running inside subagent/teammate (agent_id=agt_1, agent_type=general-purpose)

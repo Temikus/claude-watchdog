@@ -76,16 +76,35 @@ Generate byte-exact outputs from the current Node implementation before the
 port and commit them. The port must reproduce them with `diff -u`. Any
 intentional change updates the golden in the same PR.
 
-- [ ] `tests/golden/midturn.extract.txt` - `extract` output for the fixture.
-- [ ] `tests/golden/midturn.condense-4096.txt` and `-8192.txt` - the truncation
+Landed in `tests/golden.sh` (`just test-golden`, `just golden-regen`), with the
+placeholder table, budget arithmetic, and the update rule in
+`tests/golden/README.md`.
+
+- [x] `tests/golden/midturn.extract.txt` - `extract` output for the fixture.
+- [x] `tests/golden/midturn.condense-4096.txt` and `-2048.txt` - the truncation
       path: both user-thread ends, the elision marker, the unconditional
       `[TRUNCATED]` notice, and the 20/80 and 40/60 splits.
-- [ ] `tests/golden/stop.prompt.txt` - the `reason` string the Stop hook emits,
+      8192 cannot truncate this fixture (extract output is 5032 bytes, so
+      `condense()` returns it unchanged), so `-8192.txt` is kept as the
+      pass-through golden and 2048 is the second truncation budget. The
+      arithmetic for each is in `tests/golden/README.md`.
+- [x] `tests/golden/stop.prompt.txt` - the `reason` string the Stop hook emits,
       with tmp paths templated out. Wording is what the model acts on.
-- [ ] `tests/golden/stop.log.<skip-reason>.txt` - one per SKIP path. The README
+- [x] `tests/golden/stop.log.<skip-reason>.txt` - one per SKIP path. The README
       promises "every decision is logged" and users grep the log, so the log
       lines are a de facto API.
-- [ ] The verbose `[DIAGNOSTICS]` header, with counts.
+      14 of the 15 SKIP paths. `SKIP: condensed transcript is empty` is
+      unreachable: it sits behind the user-message gate, and every entry that
+      satisfies `isUserMessage()` also emits a `USER` line, so the condensed
+      text is never empty there.
+- [x] The verbose `[DIAGNOSTICS]` header, with counts.
+- [x] All unstable values (tmp paths, timestamps, session ids, durations,
+      hostnames) are normalised by a single `golden_normalise` used by both the
+      generator and the comparator. Determinism verified by regenerating twice
+      and diffing.
+- [x] The deferred half of the section-1 label check: every entry in
+      `tests/labels.txt` is asserted to appear in a `midturn.*` golden, so the
+      list cannot go stale in either direction.
 
 ## 3. Untested behaviours
 
@@ -205,7 +224,7 @@ case where integration fixtures earn their keep:
       `(no content)`), and a >1 MB session for the perf budget.
 - [ ] `just fixture-sanitise <path>` so capturing a new fixture is cheap enough
       to actually happen.
-- [ ] `design/formats.md` documenting each transcript entry type and each event
+- [x] `design/formats.md` documenting each transcript entry type and each event
       field the hooks consume, with the Claude Code version it appeared in.
 
 ## 5. Write the contract
@@ -214,7 +233,7 @@ No single document states what the plugin does at wire level. The port needs
 one to port against, and every line in it should map to a test. A line with no
 test is a gap.
 
-- [ ] `design/contract.md` covering:
+- [x] `design/contract.md` covering:
   - Inputs: the three events, the fields consumed, the stdin caps.
   - Gate order exactly as the code has it: disabled, session id, `agent_id`,
     `stop_reason`, echo sentinel, background tasks, session cron, skip file,
@@ -266,27 +285,40 @@ test is a gap.
 
 ## 7. Documentation drift
 
-- [ ] README "How it works" step 4 says exit 2 + stderr. The default has been
-      exit 0 + JSON `decision: block` since backlog item 1 landed.
-- [ ] README Requirements say Node >= 18; the CI floor is 20. Pick one.
-- [ ] README gate list order differs from the code (section 5).
-- [ ] README "Session has not already been analyzed (marker ... auto-expires
+- [x] README "How it works" step 4 says exit 2 + stderr. The default has been
+      exit 0 + JSON `decision: block` since backlog item 1 landed. Fixed; the
+      legacy mode is documented as the `CLAUDE_WATCHDOG_LEGACY_HOOK` opt-in.
+- [x] README Requirements say Node >= 18; the CI floor is 20. Picked 20. There
+      is no `package.json`, so no `engines` field to reconcile.
+- [x] README gate list order differs from the code (section 5). Re-derived from
+      `session-analysis.mjs`; the session-id and `agent_id` gates were missing
+      entirely.
+- [x] README "Session has not already been analyzed (marker ... auto-expires
       after 2 hours)" describes the concurrency lock but reads as once-per-
-      session.
-- [ ] `design/unhack.md` starts at item 2 (item 1 was removed) and the
+      session. Reworded: the marker is a per-run lock released on exit, and the
+      cooldown is what spaces repeat analyses.
+- [x] `design/unhack.md` starts at item 2 (item 1 was removed) and the
       sequencing table still references item 1.
-- [ ] `design/backlog.md` item 1 is done but still listed HIGH; item 2
+- [x] `design/backlog.md` item 1 is done but still listed HIGH; item 2
       duplicates `unhack.md` item 5.
-- [ ] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
+- [x] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
       but fix 3 (both user-thread ends, unconditional notice, line-boundary
       cuts) shipped in `condense.mjs`. Fixes 2 (goal anchor for deltas) and 4
       (non-git sessions) remain real gaps and belong in the port's scope
-      decision.
-- [ ] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
+      decision. Fix 5 is covered by `max_transcript_bytes`.
+- [x] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
       (300 vs 350 words, mandatory vs conditional sections, no transcript
-      legend). Align them or note that the difference is intentional.
-- [ ] `plugin.json` description carries no runtime requirement. Add one once
-      the binary/runtime story is decided.
+      legend). Aligned; the missing legend is now stated as deliberate, since
+      the skill reads the live conversation rather than a condensed file.
+- [x] `plugin.json` description carries no runtime requirement. Names the Node
+      20 floor now; revisit when the binary/runtime story is decided.
+
+Found while fixing the above, not previously listed:
+
+- [x] README said the `.claude-watchdog-skip` file is looked for "in any project
+      root". The hook checks the session's `cwd`, not the walked project root.
+- [x] `CLAUDE_WATCHDOG_LEGACY_HOOK` was undocumented anywhere. Now in the
+      advanced-overrides table.
 
 ---
 

@@ -68,7 +68,7 @@ Run a short session and end Claude's turn. You should see output like:
 ## Requirements
 
 - **Claude Code** ≥ 1.0 (plugin support). Background-task awareness — deferring analysis while a subagent, shell job, or workflow is still in flight — needs Claude Code ≥ 2.1.145; it is feature-detected, so on older versions the hook behaves exactly as before.
-- **Node.js** ≥ 18 (for the hook scripts)
+- **Node.js** ≥ 20 (for the hook scripts). CI runs the suite on Node 20, 22, and 24
 - **git** in the working directory you want analyzed (the agent runs `git diff` to compare intent vs. reality — sessions in non-git dirs still get a transcript-only review)
 
 ## When does the hook actually fire?
@@ -76,16 +76,19 @@ Run a short session and end Claude's turn. You should see output like:
 Only when **all** of these are true — otherwise it exits silently and Claude stops normally:
 
 - Watchdog is not disabled (via plugin config or `CLAUDE_WATCHDOG_DISABLED=1`)
-- No `.claude-watchdog-skip` file exists in the project root
+- The event carries a well-formed `session_id`
+- The Stop is not a subagent's or teammate's (`agent_id` is absent)
 - `stop_reason == "end_turn"` (skips compaction, tool_use pauses, max_tokens cutoffs)
-- This Stop is not the watchdog's own analyzer echo (tracked via a per-session sentinel) — continuations triggered by other plugins' Stop hooks are not suppressed
-- No background tasks are in flight (subagents, shell jobs, workflows) — a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
-- No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) — avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
-- Session has not already been analyzed (marker in the plugin's data directory, auto-expires after 2 hours)
-- Transcript exists and has ≥ configured minimum tool calls (default 15) in the unanalyzed delta
-- The delta contains at least one file edit (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) or a non-read-only `Bash` command — read-only exploration turns are not reviewed
-- The delta contains at least one top-level user message
+- This Stop is not the watchdog's own analyzer echo (tracked via a per-session sentinel) - continuations triggered by other plugins' Stop hooks are not suppressed
+- No background tasks are in flight (subagents, shell jobs, workflows) - a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
+- No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) - avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
+- No `.claude-watchdog-skip` file exists in the session's working directory
+- No other watchdog run holds the per-session marker directory (a concurrency lock, released when the run exits)
+- Transcript exists at the path the event gives
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
+- The unanalyzed delta has ≥ the configured minimum tool calls (default 15)
+- The delta contains at least one file edit (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) or a non-read-only `Bash` command - read-only exploration turns are not reviewed
+- The delta contains at least one top-level user message
 - Condensed transcript is non-empty after filtering
 
 Every decision is logged to `~/.claude/logs/claude-watchdog.log`.
@@ -138,6 +141,7 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_VERBOSE` | `0` | Set to `1` to include a truncation notice in condensed transcripts |
 | `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `1` | Set to `0` to store session files in the global plugin data path instead of the project directory |
 | `CLAUDE_WATCHDOG_HOLD_TTL_SECONDS` | `240` | How long the input hold blocks prompts before auto-releasing |
+| `CLAUDE_WATCHDOG_LEGACY_HOOK` | `false` | Set to `true` to emit the analyzer instruction on stderr with exit code `2` instead of the default stdout JSON `decision: block` |
 
 ### Holding input during analysis
 
@@ -158,7 +162,7 @@ Claude presenting the analysis is not held (the analysis is already persisted to
 the analyses directory at that point), and the hook adds one Node cold-start
 (~30–80 ms) to every prompt submission while the plugin is installed.
 
-You can also create a `.claude-watchdog-skip` file in any project root to disable the hook for that project:
+You can also create a `.claude-watchdog-skip` file to disable the hook for a project. The hook looks for it in the session's working directory, so put it at the directory you start Claude Code from:
 
 ```bash
 touch .claude-watchdog-skip  # add to .gitignore if needed
@@ -173,7 +177,7 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 1. Claude Code fires the `Stop` hook when a turn ends.
 2. `session-analysis.mjs` receives the event JSON (session id, transcript path, cwd, stop reason) on stdin.
 3. `condense.mjs` filters the JSONL transcript down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. The project directory is the nearest ancestor of the session's cwd holding `.git` or `.claude`, so a turn that ends with the shell inside a subdirectory still writes to one place per project. Files older than 2 hours are cleaned up automatically in both locations.
-4. It exits with code `2` and a stderr message instructing Claude to spawn the `session-analyzer` subagent pointed at that file.
+4. It writes `{"decision": "block", "reason": ...}` to stdout and exits `0`. The reason instructs Claude to spawn the `session-analyzer` subagent pointed at that file. Setting `CLAUDE_WATCHDOG_LEGACY_HOOK=true` opts back into the old behaviour - the same instruction on stderr with exit code `2` - for hosts that do not honour the JSON decision.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
 6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.mjs` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
 
