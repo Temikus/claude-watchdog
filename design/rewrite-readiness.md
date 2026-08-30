@@ -242,27 +242,40 @@ test is a gap.
 
 ## 7. Documentation drift
 
-- [ ] README "How it works" step 4 says exit 2 + stderr. The default has been
-      exit 0 + JSON `decision: block` since backlog item 1 landed.
-- [ ] README Requirements say Node >= 18; the CI floor is 20. Pick one.
-- [ ] README gate list order differs from the code (section 5).
-- [ ] README "Session has not already been analyzed (marker ... auto-expires
+- [x] README "How it works" step 4 says exit 2 + stderr. The default has been
+      exit 0 + JSON `decision: block` since backlog item 1 landed. Fixed; the
+      legacy mode is documented as the `CLAUDE_WATCHDOG_LEGACY_HOOK` opt-in.
+- [x] README Requirements say Node >= 18; the CI floor is 20. Picked 20. There
+      is no `package.json`, so no `engines` field to reconcile.
+- [x] README gate list order differs from the code (section 5). Re-derived from
+      `session-analysis.mjs`; the session-id and `agent_id` gates were missing
+      entirely.
+- [x] README "Session has not already been analyzed (marker ... auto-expires
       after 2 hours)" describes the concurrency lock but reads as once-per-
-      session.
-- [ ] `design/unhack.md` starts at item 2 (item 1 was removed) and the
+      session. Reworded: the marker is a per-run lock released on exit, and the
+      cooldown is what spaces repeat analyses.
+- [x] `design/unhack.md` starts at item 2 (item 1 was removed) and the
       sequencing table still references item 1.
-- [ ] `design/backlog.md` item 1 is done but still listed HIGH; item 2
+- [x] `design/backlog.md` item 1 is done but still listed HIGH; item 2
       duplicates `unhack.md` item 5.
-- [ ] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
+- [x] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
       but fix 3 (both user-thread ends, unconditional notice, line-boundary
       cuts) shipped in `condense.mjs`. Fixes 2 (goal anchor for deltas) and 4
       (non-git sessions) remain real gaps and belong in the port's scope
-      decision.
-- [ ] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
+      decision. Fix 5 is covered by `max_transcript_bytes`.
+- [x] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
       (300 vs 350 words, mandatory vs conditional sections, no transcript
-      legend). Align them or note that the difference is intentional.
-- [ ] `plugin.json` description carries no runtime requirement. Add one once
-      the binary/runtime story is decided.
+      legend). Aligned; the missing legend is now stated as deliberate, since
+      the skill reads the live conversation rather than a condensed file.
+- [x] `plugin.json` description carries no runtime requirement. Names the Node
+      20 floor now; revisit when the binary/runtime story is decided.
+
+Found while fixing the above, not previously listed:
+
+- [x] README said the `.claude-watchdog-skip` file is looked for "in any project
+      root". The hook checks the session's `cwd`, not the walked project root.
+- [x] `CLAUDE_WATCHDOG_LEGACY_HOOK` was undocumented anywhere. Now in the
+      advanced-overrides table.
 
 ---
 
