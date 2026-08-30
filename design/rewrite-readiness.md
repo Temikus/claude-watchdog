@@ -174,15 +174,21 @@ case where integration fixtures earn their keep:
   `last_assistant_message`, `agent_id`, `agent_type`. Every test builds these
   by hand with `jq -n`; none was captured from a real Claude Code run.
 
-- [ ] Add `CLAUDE_WATCHDOG_DUMP_EVENTS=<dir>` to write raw stdin per hook
+- [x] Add `CLAUDE_WATCHDOG_DUMP_EVENTS=<dir>` to write raw stdin per hook
       invocation. Run a few real sessions, sanitise, and commit
       `tests/fixtures/events/{stop-plain,stop-echo,stop-bg-tasks,subagent-stop,
       prompt-submit}.json`. Tests then load these instead of literals.
-- [ ] More transcript fixtures: a subagent/sidechain session, a post-compaction
+      Done except the capture itself: the five files are committed and the
+      suite loads them via `event_fixture` / `stop_payload`, but each is marked
+      `_fixture.status: reconstructed`. Replace with a real capture per
+      `tests/fixtures/CAPTURE.md` and flip the status to `captured`.
+- [x] More transcript fixtures: a subagent/sidechain session, a post-compaction
       session, a session with `thinking` blocks, MCP tool names, and image
-      `tool_result` content (non-text blocks currently render as
-      `(no content)`), and a >1 MB session for the perf budget.
-- [ ] `just fixture-sanitise <path>` so capturing a new fixture is cheap enough
+      `tool_result` content (non-text blocks now render as a typed placeholder,
+      e.g. `[image]`; `(no content)` only appears when `content` is neither a
+      string nor an array), and a >1 MB session for the perf budget (generated
+      by `just fixture-large`, not committed).
+- [x] `just fixture-sanitise <path>` so capturing a new fixture is cheap enough
       to actually happen.
 - [ ] `design/formats.md` documenting each transcript entry type and each event
       field the hooks consume, with the Claude Code version it appeared in.

@@ -1,0 +1,7 @@
+{"type":"user","uuid":"u-cp-0001","sessionId":"00000000-0000-4000-8000-000000000003","message":{"content":"Keep going on the cache work."}}
+{"type":"summary","summary":"The session added a lockfile hash to the CI cache key, fixed two call sites in ci/, and left ci/restore.py untouched pending a decision on the fallback key.","leafUuid":"u-cp-0001"}
+{"type":"user","uuid":"u-cp-0002","isCompactSummary":true,"message":{"content":[{"type":"text","text":"This session is being continued from a previous conversation that ran out of context. The conversation is summarized below: The session added a lockfile hash to the CI cache key."}]}}
+{"type":"assistant","uuid":"a-cp-0001","message":{"content":[{"type":"text","text":"Picking up after compaction. Finishing ci/restore.py."},{"type":"tool_use","id":"toolu_cp01","name":"Read","input":{"file_path":"/repo/ci/restore.py"}}]}}
+{"type":"user","uuid":"u-cp-0003","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_cp01","content":"def restore(name):\n    return lookup(name)"}]}}
+{"type":"assistant","uuid":"a-cp-0002","message":{"content":[{"type":"tool_use","id":"toolu_cp02","name":"Edit","input":{"file_path":"/repo/ci/restore.py","old_string":"lookup(name)","new_string":"lookup(cache_key(name))"}}]}}
+{"type":"user","uuid":"u-cp-0004","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_cp02","content":"The file /repo/ci/restore.py has been updated."}]}}

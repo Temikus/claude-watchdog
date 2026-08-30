@@ -3,3 +3,4 @@
 *.log
 .claude/
 reference
+tests/fixtures/large-session.jsonl

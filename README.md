@@ -139,6 +139,7 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |
 | `CLAUDE_WATCHDOG_VERBOSE` | `0` | Set to `1` to include a truncation notice in condensed transcripts |
+| `CLAUDE_WATCHDOG_DUMP_EVENTS` | unset | Set to a directory to write the raw stdin of every hook invocation there, one file each, for capturing test fixtures. Off unless set, and never changes hook behaviour. See [tests/fixtures/CAPTURE.md](tests/fixtures/CAPTURE.md) |
 | `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `1` | Set to `0` to store session files in the global plugin data path instead of the project directory |
 | `CLAUDE_WATCHDOG_HOLD_TTL_SECONDS` | `240` | How long the input hold blocks prompts before auto-releasing |
 | `CLAUDE_WATCHDOG_LEGACY_HOOK` | `false` | Set to `true` to emit the analyzer instruction on stderr with exit code `2` instead of the default stdout JSON `decision: block` |
@@ -223,11 +224,15 @@ Requires `jq` and `just` in addition to Node.js:
 
 ```bash
 just lint    # validate JSON manifests and JS syntax
-just test    # run smoke tests
+just test    # run the whole suite
 just check   # lint + all tests
+just test-perf              # perf budgets (not part of `just test`)
+just fixture-sanitise PATH  # strip secrets from a captured fixture
 ```
 
-See `justfile` for the full list.
+See `justfile` for the full list, and
+[tests/fixtures/CAPTURE.md](tests/fixtures/CAPTURE.md) for how to capture a new
+hook-event or transcript fixture.
 
 ## License
 

@@ -87,9 +87,11 @@ function toolResultText(block, name) {
   const max = toolResultMax(name, block.is_error === true);
   if (typeof block.content === 'string') return clip(block.content, max);
   if (Array.isArray(block.content)) {
+    // Non-text blocks become a typed placeholder. Dropping them left an
+    // image-only result rendering as an empty body, so the analyzer could not
+    // tell anything came back at all.
     return clip(block.content
-      .filter(c => c.type === 'text')
-      .map(c => c.text)
+      .map(c => (c.type === 'text' ? c.text : `[${c.type || 'unknown'}]`))
       .join('\n'), max);
   }
   return '(no content)';

@@ -1,0 +1,15 @@
+{
+  "_fixture": {
+    "status": "captured",
+    "source": "Captured via CLAUDE_WATCHDOG_DUMP_EVENTS from a real session, macOS, Claude Code 2.1.250 (Claude Code)",
+    "note": "Sanitised with just fixture-sanitise. Note prompt_id, which the reconstruction did not have.",
+    "claude_code_version": "2.1.250 (Claude Code)"
+  },
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/example/.claude/projects/-Users-example-Library-Mobile-Documents-com-apple-CloudDocs-Code-claude-watchdog-worktrees-rewrite-fixtures/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "auto",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "This looks too complicated, let's proceed without the capture, submit a PR if there's anything in this branch to push."
+}
