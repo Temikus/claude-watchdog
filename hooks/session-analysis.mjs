@@ -445,8 +445,13 @@ try {
   // The delta ends on tool results, so the concluding turn - the deliverable the
   // analyzer must judge - is absent. Appended after condense() so it is never
   // truncated away.
-  const finalMsg = event.last_assistant_message ?? '';
-  if (finalMsg.trim()) {
+  const finalMsg = (event.last_assistant_message ?? '').trim();
+  // The flush is a race, not a guarantee: on a slower turn the message is already
+  // on disk and in the delta, and appending unconditionally would duplicate it.
+  // Probe on the tail so a message split across several text blocks still matches
+  // its own last ASSISTANT line.
+  const alreadyPresent = finalMsg && condensedContent.includes(finalMsg.slice(-200));
+  if (finalMsg && !alreadyPresent) {
     condensedContent += `\n\n=== FINAL ASSISTANT MESSAGE (session ended here) ===\n${finalMsg}\n`;
   }
 
