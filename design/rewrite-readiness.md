@@ -181,7 +181,7 @@ case where integration fixtures earn their keep:
       `(no content)`), and a >1 MB session for the perf budget.
 - [ ] `just fixture-sanitise <path>` so capturing a new fixture is cheap enough
       to actually happen.
-- [ ] `design/formats.md` documenting each transcript entry type and each event
+- [x] `design/formats.md` documenting each transcript entry type and each event
       field the hooks consume, with the Claude Code version it appeared in.
 
 ## 5. Write the contract
@@ -190,7 +190,7 @@ No single document states what the plugin does at wire level. The port needs
 one to port against, and every line in it should map to a test. A line with no
 test is a gap.
 
-- [ ] `design/contract.md` covering:
+- [x] `design/contract.md` covering:
   - Inputs: the three events, the fields consumed, the stdin caps.
   - Gate order exactly as the code has it: disabled, session id, `agent_id`,
     `stop_reason`, echo sentinel, background tasks, session cron, skip file,
