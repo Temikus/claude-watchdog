@@ -115,27 +115,27 @@ behaviour, not the accidental one.
 
 ### Stop hook (`session-analysis.mjs`)
 
-- [ ] `stop_reason != end_turn` skips (compaction, `tool_use`, `max_tokens`).
-- [ ] Missing or nonexistent `transcript_path` skips.
-- [ ] `.claude-watchdog-skip` in the hook cwd skips.
-- [ ] Read-only turn skips (`edits == 0 && mutatingBash == 0`), and the
+- [x] `stop_reason != end_turn` skips (compaction, `tool_use`, `max_tokens`).
+- [x] Missing or nonexistent `transcript_path` skips.
+- [x] `.claude-watchdog-skip` in the hook cwd skips.
+- [x] Read-only turn skips (`edits == 0 && mutatingBash == 0`), and the
       `READ_ONLY_BASH` regex itself: `sed -n` is read-only, `sed -i` is not,
       leading whitespace is tolerated, `git diff` yes but `git push` no.
-- [ ] Zero top-level user messages in the delta skips. Includes the definition
+- [x] Zero top-level user messages in the delta skips. Includes the definition
       of "top-level": a text block sharing an entry with a `tool_result` does
       not count.
-- [ ] `MultiEdit` and `NotebookEdit` (`notebook_path`) count as edits, and an
+- [x] `MultiEdit` and `NotebookEdit` (`notebook_path`) count as edits, and an
       `edited_text_file` attachment adds its filename to the touched list.
-- [ ] Touched-file paths are made relative to the hook cwd, and newlines are
+- [x] Touched-file paths are made relative to the hook cwd, and newlines are
       stripped from them.
-- [ ] `include_rules`: project files before global, files over 8 KB skipped,
+- [x] `include_rules`: project files before global, files over 8 KB skipped,
       16 KB total cap, `CLAUDE_WATCHDOG_INCLUDE_RULES=0` sends none, and the
       skip reason is logged.
-- [ ] `Previous analysis:` line appears in the prompt when a prior analysis
+- [x] `Previous analysis:` line appears in the prompt when a prior analysis
       file exists for the session, and points at the newest one.
-- [ ] `interactive_recommendations` switches the post-analysis instruction
+- [x] `interactive_recommendations` switches the post-analysis instruction
       block and the todo path.
-- [ ] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
+- [x] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
       stderr, exit 2, nothing on stdout.
 - [x] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the
       `LOG ROTATED` line. `tests/lifecycle.sh`.
@@ -214,15 +214,21 @@ case where integration fixtures earn their keep:
   `last_assistant_message`, `agent_id`, `agent_type`. Every test builds these
   by hand with `jq -n`; none was captured from a real Claude Code run.
 
-- [ ] Add `CLAUDE_WATCHDOG_DUMP_EVENTS=<dir>` to write raw stdin per hook
+- [x] Add `CLAUDE_WATCHDOG_DUMP_EVENTS=<dir>` to write raw stdin per hook
       invocation. Run a few real sessions, sanitise, and commit
       `tests/fixtures/events/{stop-plain,stop-echo,stop-bg-tasks,subagent-stop,
       prompt-submit}.json`. Tests then load these instead of literals.
-- [ ] More transcript fixtures: a subagent/sidechain session, a post-compaction
+      Done except the capture itself: the five files are committed and the
+      suite loads them via `event_fixture` / `stop_payload`, but each is marked
+      `_fixture.status: reconstructed`. Replace with a real capture per
+      `tests/fixtures/CAPTURE.md` and flip the status to `captured`.
+- [x] More transcript fixtures: a subagent/sidechain session, a post-compaction
       session, a session with `thinking` blocks, MCP tool names, and image
-      `tool_result` content (non-text blocks currently render as
-      `(no content)`), and a >1 MB session for the perf budget.
-- [ ] `just fixture-sanitise <path>` so capturing a new fixture is cheap enough
+      `tool_result` content (non-text blocks now render as a typed placeholder,
+      e.g. `[image]`; `(no content)` only appears when `content` is neither a
+      string nor an array), and a >1 MB session for the perf budget (generated
+      by `just fixture-large`, not committed).
+- [x] `just fixture-sanitise <path>` so capturing a new fixture is cheap enough
       to actually happen.
 - [x] `design/formats.md` documenting each transcript entry type and each event
       field the hooks consume, with the Claude Code version it appeared in.

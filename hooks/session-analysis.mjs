@@ -6,7 +6,8 @@ import {
 import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
-import { extractTranscript, condense, counts } from './condense.mjs';
+import { extractTranscript, condense, counts, clip } from './condense.mjs';
+import { dumpEvent } from './dump-events.mjs';
 
 // Everything this hook creates - the log, the sessions dirs, the delta, the
 // marker, the condensed transcript, the persisted analyses - carries session
@@ -104,7 +105,7 @@ function capAnalyses() {
 }
 
 function truncateStrings(val, max) {
-  if (typeof val === 'string') return val.length > max ? val.slice(0, max) + '...[truncated]' : val;
+  if (typeof val === 'string') return val.length > max ? clip(val, max) + '...[truncated]' : val;
   if (Array.isArray(val)) return val.map(v => truncateStrings(v, max));
   if (val && typeof val === 'object') {
     const out = {};
@@ -250,6 +251,7 @@ try {
   }
 
   const input = readFileSync(0).slice(0, 65536).toString('utf8');
+  dumpEvent('stop', input);
   const event = JSON.parse(input);
 
   const sessionId = event.session_id;

@@ -58,6 +58,23 @@ test-agent-prompt:
 test-perf:
     bash tests/perf.sh
 
+# --- rewrite/fixtures block (section 4) -------------------------------------
+
+# Event-dump capture, the sanitiser, and the reconstructed fixtures
+test-fixtures:
+    bash tests/fixtures.sh
+
+# Strip secrets and machine-specific paths from a captured fixture, in place.
+# See tests/fixtures/CAPTURE.md.
+fixture-sanitise path:
+    bash tests/fixture-sanitise.sh "{{ path }}"
+
+# Generate the >1 MB perf transcript (gitignored; regenerate on demand)
+fixture-large out="tests/fixtures/large-session.jsonl" bytes="1048576":
+    bash tests/fixtures/gen-large-session.sh "{{ out }}" "{{ bytes }}"
+
+# --- end rewrite/fixtures block ---------------------------------------------
+
 # --- section 2: goldens (rewrite/goldens) ---------------------------------
 
 # Byte-exact goldens vs the current implementation
@@ -83,7 +100,7 @@ test-lifecycle:
 # --- end rewrite/coverage-config --------------------------------------------
 
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-golden test-config test-lifecycle
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-gates test-fixtures test-golden test-config test-lifecycle
 
 # Lint + all tests
 check: lint test
@@ -182,3 +199,11 @@ uninstall-dev:
     claude plugin marketplace remove "$MP_NAME" 2>/dev/null || true
     rm -rf "$MP_DIR"
     echo "Removed dev install. Restart Claude Code."
+
+# --- rewrite/coverage-gates -------------------------------------------------
+
+# Stop-hook gating and transcript handling
+test-gates:
+    bash tests/gates.sh
+
+# --- end rewrite/coverage-gates ---------------------------------------------

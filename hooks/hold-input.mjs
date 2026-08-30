@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, unlinkSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { dumpEvent } from './dump-events.mjs';
 
 // The log and the pending sentinel both name the session; keep them owner-only
 // regardless of the caller's umask.
@@ -49,6 +50,7 @@ try {
   for (const w of CONFIG_WARNINGS) log(w);
 
   const input = readFileSync(0).slice(0, 65536).toString('utf8');
+  dumpEvent('prompt-submit', input);
   const event = JSON.parse(input);
 
   const sessionId = event.session_id ?? '';
