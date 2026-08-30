@@ -185,12 +185,13 @@ constant or user-facing configuration:
 
 ## Sequencing
 
-Items 1–2 should land first (highest impact, lowest effort). Item 4 can land
-independently at any time. Items 3 and 6 can be bundled. Item 5 is independent
-and lower priority.
+Numbering starts at 2: item 1 (exit code 2 to JSON `decision: block`) has
+shipped and was removed. Item 2 should land first (highest impact, lowest
+effort). Item 4 can land independently at any time. Items 3 and 6 can be
+bundled. Item 5 is independent and lower priority.
 
 | Phase | Items | Depends on |
 |---|---|---|
-| A | 1 (exit code), 2 (cfg priority), 4 (UTF-8) | — |
-| B | 3 (mutex), 6 (constants) | — |
-| C | 5 (/clear boundary) | — |
+| A | 2 (cfg priority), 4 (UTF-8) | - |
+| B | 3 (mutex), 6 (constants) | - |
+| C | 5 (/clear boundary) | - |

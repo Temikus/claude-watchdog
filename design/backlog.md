@@ -6,64 +6,26 @@ Last pruned: 2026-05-15.
 
 ---
 
-## HIGH PRIORITY
+## DONE
 
 ### 1. Eliminate "Stop hook error" framing on analysis trigger
 
-**Problem:** Every analysis trigger displays as `Stop hook error: ...` in the
-terminal. Users think the plugin crashed. The exit-code-2 mechanism is designed
-for blocking errors, not routine operation.
-
-**Requires investigation.** The obvious fix — exit 0 with JSON
-`{"decision": "block", "reason": "..."}` — may not work. The docs confirm that
-`decision: "block"` prevents Claude from stopping, but they are **ambiguous on
-whether the `reason` field reaches Claude as actionable context** for Stop hooks.
-
-- Exit code 2 + stderr: explicitly documented as "stderr is fed to Claude as
-  error message." This is the current mechanism and it reliably works.
-- Exit 0 + JSON `reason`: never explicitly documented as being passed to Claude
-  on Stop hooks. Compare with `stopReason` (for `continue: false`) which is
-  explicitly "shown to user, not to Claude."
-- `additionalContext` (which does reach Claude): only supported on
-  `SessionStart`, `PreToolUse`, and `PermissionRequest` — not Stop.
-- Stop hooks have no `hookSpecificOutput` support at all.
-
-**Risk:** If `reason` is user-facing only, switching to exit-0 JSON would break
-the plugin — Claude would resume but never see the instruction to spawn the
-analyzer.
-
-**Approach — test these options in order:**
-
-1. **Exit 0 with plain text on stdout** — docs say plain text is "added as
-   context." If Claude sees and acts on plaintext stdout from a Stop hook, this
-   is the cleanest fix. No error framing, no JSON ambiguity.
-2. **Exit 0 with JSON `decision: "block"` + `reason`** — test whether Claude
-   acts on the `reason` content. If it does, this is the structured option.
-3. **Keep exit 2 but add `statusMessage`** — adding
-   `"statusMessage": "Preparing session analysis..."` to the hook config in
-   `hooks/hooks.json` may soften the UX even if the "error" label remains.
-   Lowest risk, smallest improvement.
-
-**Action:** Build a small test harness that tries options 1 and 2 and verifies
-Claude spawns the analyzer. Only then commit to a migration path.
+**Status: done.** The Stop hook now exits `0` and writes
+`{"decision": "block", "reason": "..."}` to stdout; the `reason` does reach
+Claude as actionable context, so option 2 of the original investigation was the
+one that worked. The old exit-2 + stderr path is kept behind
+`CLAUDE_WATCHDOG_LEGACY_HOOK=true` for hosts that do not honour the JSON
+decision. `unhack.md` numbering starts at 2 for the same reason.
 
 ---
+
+## HIGH PRIORITY
 
 ### 2. Handle `/clear` boundaries to prevent stale transcript analysis
 
-**Problem:** The session ID does not reset on `/clear`. The condensed transcript
-file is keyed to the session ID, so post-`/clear` analyses may read accumulated
-content from prior context, analyzing the wrong scope.
-
-**Fix options:**
-- Include a timestamp or turn counter in the condensed file name.
-- Use the `SessionEnd` hook with matcher `"clear"` to reset the cursor.
-
-**Caveat:** Validate that `SessionEnd` with `end_reason: "clear"` matcher works
-as documented before relying on it. If it doesn't, fall back to timestamp-based
-file naming.
-
----
+See `unhack.md` item 5 (`/clear` boundary cursor reset), which carries the
+investigation and the timestamp-based cursor naming approach. Tracked there,
+not here.
 
 ---
 
