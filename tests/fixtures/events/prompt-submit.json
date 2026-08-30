@@ -1,14 +1,15 @@
 {
   "_fixture": {
-    "status": "reconstructed",
-    "source": "hooks/hooks.json UserPromptSubmit entry, hooks/hold-input.mjs, tests/hold.sh mk_payload",
-    "note": "NOT captured from a real run. The hold hook reads only session_id, so the other fields are unverified.",
-    "claude_code_version": "unknown"
+    "status": "captured",
+    "source": "Captured via CLAUDE_WATCHDOG_DUMP_EVENTS from a real session, macOS, Claude Code 2.1.250 (Claude Code)",
+    "note": "Sanitised with just fixture-sanitise. Note prompt_id, which the reconstruction did not have.",
+    "claude_code_version": "2.1.250 (Claude Code)"
   },
-  "hook_event_name": "UserPromptSubmit",
   "session_id": "00000000-0000-4000-8000-000000000001",
-  "transcript_path": "/Users/example/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "transcript_path": "/Users/example/.claude/projects/-Users-example-Library-Mobile-Documents-com-apple-CloudDocs-Code-claude-watchdog-worktrees-rewrite-fixtures/00000000-0000-4000-8000-000000000001.jsonl",
   "cwd": "/repo",
-  "permission_mode": "default",
-  "prompt": "now run the tests"
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "auto",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "This looks too complicated, let's proceed without the capture, submit a PR if there's anything in this branch to push."
 }

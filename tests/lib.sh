@@ -17,6 +17,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# The suite passes every setting explicitly per invocation. A CLAUDE_WATCHDOG_*
+# left in the ambient environment (a plugin config, an export for a capture run)
+# would otherwise reach the hooks and fail tests that never opted into it.
+while IFS='=' read -r _var _; do
+  case "$_var" in CLAUDE_WATCHDOG_*) unset "$_var" ;; esac
+done < <(env)
+
 : "${HOOK_STOP:=node hooks/session-analysis.mjs}"
 : "${HOOK_HOLD:=node hooks/hold-input.mjs}"
 : "${HOOK_PERSIST:=node hooks/persist-analysis.mjs}"
