@@ -12,6 +12,10 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { dumpEvent } from './dump-events.mjs';
 
+// The log and the pending sentinel both name the session; keep them owner-only
+// regardless of the caller's umask.
+process.umask(0o077);
+
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
 }
@@ -20,7 +24,19 @@ const LOG_FILE = process.env.CLAUDE_WATCHDOG_LOG ?? join(homedir(), '.claude/log
 const WATCHDOG_TMP = process.env.CLAUDE_WATCHDOG_TMP ?? process.env.CLAUDE_PLUGIN_DATA ?? join(homedir(), '.claude/tmp/claude-watchdog');
 const GLOBAL_SESSIONS_DIR = join(WATCHDOG_TMP, 'sessions');
 const HOLD_INPUT = cfg('CLAUDE_WATCHDOG_HOLD_INPUT', 'CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS', '0');
-const HOLD_TTL_SECONDS = parseInt(process.env.CLAUDE_WATCHDOG_HOLD_TTL_SECONDS ?? '240', 10);
+// A non-numeric TTL used to parse to NaN, which is neither <= 0 nor greater
+// than any age - so the hold became permanent until the override. Fall back to
+// the default. The warning is buffered until the log directory exists.
+const CONFIG_WARNINGS = [];
+const HOLD_TTL_SECONDS = (() => {
+  const raw = process.env.CLAUDE_WATCHDOG_HOLD_TTL_SECONDS ?? '240';
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n)) {
+    CONFIG_WARNINGS.push(`CONFIG: CLAUDE_WATCHDOG_HOLD_TTL_SECONDS='${raw}' is not a number, using default 240`);
+    return 240;
+  }
+  return n;
+})();
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -31,6 +47,7 @@ try {
   if (HOLD_INPUT !== '1' && HOLD_INPUT !== 'true') process.exit(0);
 
   mkdirSync(dirname(LOG_FILE), { recursive: true });
+  for (const w of CONFIG_WARNINGS) log(w);
 
   const input = readFileSync(0).slice(0, 65536).toString('utf8');
   dumpEvent('prompt-submit', input);

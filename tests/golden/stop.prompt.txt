@@ -1,0 +1,12 @@
+Please spawn a session-analyzer agent to critically analyze this session.
+
+Use the Agent tool with:
+- subagent_type: "claude-watchdog:session-analyzer"
+- model: "sonnet"
+- prompt: "Read and analyze the condensed session transcript at '<TMP>/proj/.claude/tmp/claude-watchdog/sessions/condensed-<SESSION>.txt'. The working directory is '<TMP>/proj'.
+This is the first analysis for this session.
+Files touched this slice: stack.yaml, /repo/MAINTENANCE.md, out.txt
+User instruction files: <TMP>/proj/CLAUDE.md, <TMP>/home/.claude/rules/a-rules.md
+Provide your critical analysis."
+
+Present the analysis to the user, then stop.
