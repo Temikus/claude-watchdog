@@ -44,6 +44,17 @@ export const MIDTURN_LINE = /^USER \(mid-turn/;
 const MIDTURN_LABEL = 'USER (mid-turn)';
 const ELISION = '--- [earlier user messages elided] ---';
 
+// String.prototype.slice cuts at UTF-16 code units. A cap landing between the
+// halves of a surrogate pair leaves a lone surrogate, which encodes to UTF-8 as
+// U+FFFD - the same corruption unhack.md item 4 removed from the byte-budget
+// path, still present in every per-field cap. Drop the orphaned half.
+export function clip(str, max) {
+  if (str.length <= max) return str;
+  const code = str.charCodeAt(max - 1);
+  const isHighSurrogate = code >= 0xd800 && code <= 0xdbff;
+  return str.slice(0, isHighSurrogate ? max - 1 : max);
+}
+
 function parseLines(lines) {
   const out = [];
   for (const line of lines) {
@@ -74,7 +85,7 @@ function toolResultMax(name, isError) {
 
 function toolResultText(block, name) {
   const max = toolResultMax(name, block.is_error === true);
-  if (typeof block.content === 'string') return block.content.slice(0, max);
+  if (typeof block.content === 'string') return clip(block.content, max);
   if (Array.isArray(block.content)) {
     // Non-text blocks become a typed placeholder. Dropping them left an
     // image-only result rendering as an empty body, so the analyzer could not
@@ -142,9 +153,9 @@ export function extractTranscript(lines) {
           if (block.type === 'text') {
             output.push(`ASSISTANT: ${block.text}`);
           } else if (block.type === 'thinking') {
-            output.push(`THINKING: ${(block.thinking || '').slice(0, THINKING_MAX)}`);
+            output.push(`THINKING: ${clip(block.thinking || '', THINKING_MAX)}`);
           } else if (block.type === 'tool_use') {
-            output.push(`TOOL_USE: ${block.name}(${JSON.stringify(block.input).slice(0, TOOL_INPUT_MAX)})`);
+            output.push(`TOOL_USE: ${block.name}(${clip(JSON.stringify(block.input), TOOL_INPUT_MAX)})`);
           }
         }
       }
@@ -159,11 +170,11 @@ export function extractTranscript(lines) {
         output.push(`USER (edited file): ${att.filename || '(unknown)'}`);
       } else if (att.type === 'hook_blocking_error') {
         const err = att.blockingError?.blockingError ?? att.blockingError ?? '';
-        output.push(`SYSTEM[hook-blocked ${att.hookName || att.hookEvent || 'hook'}]: ${String(err).slice(0, SYSTEM_MAX)}`);
+        output.push(`SYSTEM[hook-blocked ${att.hookName || att.hookEvent || 'hook'}]: ${clip(String(err), SYSTEM_MAX)}`);
       } else if (att.type === 'plan_mode' || att.type === 'plan_mode_exit') {
         output.push(`SYSTEM[${att.type}]`);
       } else if (!NOISE_ATTACHMENTS.has(att.type)) {
-        output.push(`SYSTEM[attachment:${att.type || 'unknown'}]: ${JSON.stringify(att).slice(0, SYSTEM_MAX)}`);
+        output.push(`SYSTEM[attachment:${att.type || 'unknown'}]: ${clip(JSON.stringify(att), SYSTEM_MAX)}`);
       }
     } else if (obj.type === 'queue-operation') {
       // 'remove' means the queued prompt was pulled out and injected into the
@@ -175,7 +186,7 @@ export function extractTranscript(lines) {
         output.push(`${MIDTURN_LABEL}: ${content}`);
       }
     } else if (!NOISE_TYPES.has(obj.type)) {
-      output.push(`SYSTEM[${obj.type || 'unknown'}]: ${JSON.stringify(obj).slice(0, SYSTEM_MAX)}`);
+      output.push(`SYSTEM[${obj.type || 'unknown'}]: ${clip(JSON.stringify(obj), SYSTEM_MAX)}`);
     }
   }
 

@@ -96,27 +96,27 @@ behaviour, not the accidental one.
 
 ### Stop hook (`session-analysis.mjs`)
 
-- [ ] `stop_reason != end_turn` skips (compaction, `tool_use`, `max_tokens`).
-- [ ] Missing or nonexistent `transcript_path` skips.
-- [ ] `.claude-watchdog-skip` in the hook cwd skips.
-- [ ] Read-only turn skips (`edits == 0 && mutatingBash == 0`), and the
+- [x] `stop_reason != end_turn` skips (compaction, `tool_use`, `max_tokens`).
+- [x] Missing or nonexistent `transcript_path` skips.
+- [x] `.claude-watchdog-skip` in the hook cwd skips.
+- [x] Read-only turn skips (`edits == 0 && mutatingBash == 0`), and the
       `READ_ONLY_BASH` regex itself: `sed -n` is read-only, `sed -i` is not,
       leading whitespace is tolerated, `git diff` yes but `git push` no.
-- [ ] Zero top-level user messages in the delta skips. Includes the definition
+- [x] Zero top-level user messages in the delta skips. Includes the definition
       of "top-level": a text block sharing an entry with a `tool_result` does
       not count.
-- [ ] `MultiEdit` and `NotebookEdit` (`notebook_path`) count as edits, and an
+- [x] `MultiEdit` and `NotebookEdit` (`notebook_path`) count as edits, and an
       `edited_text_file` attachment adds its filename to the touched list.
-- [ ] Touched-file paths are made relative to the hook cwd, and newlines are
+- [x] Touched-file paths are made relative to the hook cwd, and newlines are
       stripped from them.
-- [ ] `include_rules`: project files before global, files over 8 KB skipped,
+- [x] `include_rules`: project files before global, files over 8 KB skipped,
       16 KB total cap, `CLAUDE_WATCHDOG_INCLUDE_RULES=0` sends none, and the
       skip reason is logged.
-- [ ] `Previous analysis:` line appears in the prompt when a prior analysis
+- [x] `Previous analysis:` line appears in the prompt when a prior analysis
       file exists for the session, and points at the newest one.
-- [ ] `interactive_recommendations` switches the post-analysis instruction
+- [x] `interactive_recommendations` switches the post-analysis instruction
       block and the todo path.
-- [ ] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
+- [x] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
       stderr, exit 2, nothing on stdout.
 - [ ] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the
       `LOG ROTATED` line.
@@ -128,14 +128,17 @@ behaviour, not the accidental one.
       no user messages, empty condensed).
 - [ ] Directories are created 0700 and files land 0600 (umask), in both storage
       locations.
-- [ ] Garbage stdin and the 64 KB stdin cap fail open with exit 0 on the Stop
-      hook. The hold hook has this test; the Stop hook does not.
+- [x] Garbage stdin and the 64 KB stdin cap fail open with exit 0 on the Stop
+      hook.
 - [ ] `cwd` arriving as the literal string `"null"` falls back to global
       storage.
-- [ ] Empty condensed transcript skips.
-- [ ] Multi-byte UTF-8 at a truncation boundary is never split. `unhack.md`
-      item 4 says this is fixed; nothing non-ASCII is in any test.
-- [ ] CRLF line endings in the transcript.
+- [x] Empty condensed transcript skips. Covered at the `condense.mjs` CLI
+      level. The Stop hook's own guard is unreachable: any delta that passes
+      the edit and user-message gates emits at least one condensed line.
+- [x] Multi-byte UTF-8 at a truncation boundary is never split. `unhack.md`
+      item 4 only fixed the byte-budget path; the per-field caps still split
+      surrogate pairs. Fixed via `clip()` in `condense.mjs`.
+- [x] CRLF line endings in the transcript.
 - [ ] Non-numeric numeric config. `CLAUDE_WATCHDOG_MIN_TOOL_USES=abc` parses to
       `NaN`, `count < NaN` is false, and the gate is silently disabled. Same
       for cooldown and max bytes. The port must decide (reject, or fall back to
@@ -248,27 +251,40 @@ test is a gap.
 
 ## 7. Documentation drift
 
-- [ ] README "How it works" step 4 says exit 2 + stderr. The default has been
-      exit 0 + JSON `decision: block` since backlog item 1 landed.
-- [ ] README Requirements say Node >= 18; the CI floor is 20. Pick one.
-- [ ] README gate list order differs from the code (section 5).
-- [ ] README "Session has not already been analyzed (marker ... auto-expires
+- [x] README "How it works" step 4 says exit 2 + stderr. The default has been
+      exit 0 + JSON `decision: block` since backlog item 1 landed. Fixed; the
+      legacy mode is documented as the `CLAUDE_WATCHDOG_LEGACY_HOOK` opt-in.
+- [x] README Requirements say Node >= 18; the CI floor is 20. Picked 20. There
+      is no `package.json`, so no `engines` field to reconcile.
+- [x] README gate list order differs from the code (section 5). Re-derived from
+      `session-analysis.mjs`; the session-id and `agent_id` gates were missing
+      entirely.
+- [x] README "Session has not already been analyzed (marker ... auto-expires
       after 2 hours)" describes the concurrency lock but reads as once-per-
-      session.
-- [ ] `design/unhack.md` starts at item 2 (item 1 was removed) and the
+      session. Reworded: the marker is a per-run lock released on exit, and the
+      cooldown is what spaces repeat analyses.
+- [x] `design/unhack.md` starts at item 2 (item 1 was removed) and the
       sequencing table still references item 1.
-- [ ] `design/backlog.md` item 1 is done but still listed HIGH; item 2
+- [x] `design/backlog.md` item 1 is done but still listed HIGH; item 2
       duplicates `unhack.md` item 5.
-- [ ] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
+- [x] `design/condensed-transcript-cutoff.md` says fixes 2 to 5 are outstanding,
       but fix 3 (both user-thread ends, unconditional notice, line-boundary
       cuts) shipped in `condense.mjs`. Fixes 2 (goal anchor for deltas) and 4
       (non-git sessions) remain real gaps and belong in the port's scope
-      decision.
-- [ ] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
+      decision. Fix 5 is covered by `max_transcript_bytes`.
+- [x] `skills/analyze-session/SKILL.md` has diverged from the agent prompt
       (300 vs 350 words, mandatory vs conditional sections, no transcript
-      legend). Align them or note that the difference is intentional.
-- [ ] `plugin.json` description carries no runtime requirement. Add one once
-      the binary/runtime story is decided.
+      legend). Aligned; the missing legend is now stated as deliberate, since
+      the skill reads the live conversation rather than a condensed file.
+- [x] `plugin.json` description carries no runtime requirement. Names the Node
+      20 floor now; revisit when the binary/runtime story is decided.
+
+Found while fixing the above, not previously listed:
+
+- [x] README said the `.claude-watchdog-skip` file is looked for "in any project
+      root". The hook checks the session's `cwd`, not the walked project root.
+- [x] `CLAUDE_WATCHDOG_LEGACY_HOOK` was undocumented anywhere. Now in the
+      advanced-overrides table.
 
 ---
 

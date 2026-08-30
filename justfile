@@ -76,7 +76,7 @@ fixture-large out="tests/fixtures/large-session.jsonl" bytes="1048576":
 # --- end rewrite/fixtures block ---------------------------------------------
 
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-fixtures
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-gates test-fixtures
 
 # Lint + all tests
 check: lint test
@@ -175,3 +175,11 @@ uninstall-dev:
     claude plugin marketplace remove "$MP_NAME" 2>/dev/null || true
     rm -rf "$MP_DIR"
     echo "Removed dev install. Restart Claude Code."
+
+# --- rewrite/coverage-gates -------------------------------------------------
+
+# Stop-hook gating and transcript handling
+test-gates:
+    bash tests/gates.sh
+
+# --- end rewrite/coverage-gates ---------------------------------------------
