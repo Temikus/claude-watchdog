@@ -70,8 +70,20 @@ golden-regen:
 
 # --- end section 2 --------------------------------------------------------
 
+# --- rewrite/coverage-config ------------------------------------------------
+
+# Config parsing, storage resolution, and on-disk permissions
+test-config:
+    bash tests/config.sh
+
+# Log rotation, sessions-dir cleanup, analyses cap, marker/delta release
+test-lifecycle:
+    bash tests/lifecycle.sh
+
+# --- end rewrite/coverage-config --------------------------------------------
+
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-golden
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-golden test-config test-lifecycle
 
 # Lint + all tests
 check: lint test

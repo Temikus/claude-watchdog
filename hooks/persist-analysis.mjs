@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
-  statSync, unlinkSync
+  statSync, unlinkSync, chmodSync
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -11,8 +11,13 @@ const ANALYSES_DIR = process.env.CLAUDE_WATCHDOG_ANALYSES_DIR ?? join(homedir(),
 const WATCHDOG_TMP = process.env.CLAUDE_WATCHDOG_TMP ?? process.env.CLAUDE_PLUGIN_DATA ?? join(homedir(), '.claude/tmp/claude-watchdog');
 const GLOBAL_SESSIONS_DIR = join(WATCHDOG_TMP, 'sessions');
 
+// The persisted analysis is the most sensitive artefact the plugin writes - it
+// quotes the session back. Owner-only regardless of the caller's umask.
+process.umask(0o077);
+
 mkdirSync(dirname(LOG_FILE), { recursive: true });
 mkdirSync(ANALYSES_DIR, { recursive: true });
+try { chmodSync(ANALYSES_DIR, 0o700); } catch { /* pre-existing dir we do not own */ }
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');

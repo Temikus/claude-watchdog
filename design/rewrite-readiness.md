@@ -137,46 +137,70 @@ behaviour, not the accidental one.
       block and the todo path.
 - [ ] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
       stderr, exit 2, nothing on stdout.
-- [ ] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the
-      `LOG ROTATED` line.
-- [ ] Two-hour cleanup of `condensed-`, `raw-`, `delta-`, `echo-`, and
+- [x] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the
+      `LOG ROTATED` line. `tests/lifecycle.sh`.
+- [x] Two-hour cleanup of `condensed-`, `raw-`, `delta-`, `echo-`, and
       `pending-` files and stale marker directories, and the 20-file analyses
-      cap in the Stop hook. Only the cursor TTL is tested today.
-- [ ] Marker directory and delta file are removed on every exit path after
+      cap in the Stop hook. `tests/lifecycle.sh`, which also pins that
+      `cursor-` files and unrecognised names survive the sweep and that a
+      non-empty stale directory is left alone.
+- [x] Marker directory and delta file are removed on every exit path after
       acquisition, including the SKIP paths (cooldown, small delta, read-only,
-      no user messages, empty condensed).
-- [ ] Directories are created 0700 and files land 0600 (umask), in both storage
-      locations.
+      no user messages) and the successful block. `tests/lifecycle.sh`. The
+      "empty condensed transcript" path is unreachable and is not covered - see
+      the note on that bullet below.
+- [x] Directories are created 0700 and files land 0600 (umask), in both storage
+      locations. `tests/config.sh`, asserting the exact mode under an explicit
+      `umask 022`. This was a bug: only the condensed transcript was covered by
+      the umask call, so the log, the analyses directory, and the persisted
+      analyses landed world-readable. Fixed on this branch.
 - [ ] Garbage stdin and the 64 KB stdin cap fail open with exit 0 on the Stop
       hook. The hold hook has this test; the Stop hook does not.
-- [ ] `cwd` arriving as the literal string `"null"` falls back to global
-      storage.
-- [ ] Empty condensed transcript skips.
+- [x] `cwd` arriving as the literal string `"null"` falls back to global
+      storage. `tests/config.sh`.
+- [ ] Empty condensed transcript skips. NOTE: this branch could not reach the
+      path. Any delta that clears `MIN_TOOL_USES` has at least one `tool_use`,
+      which always emits a `TOOL_USE:` line, and the truncating branch of
+      `condense()` prepends `[TRUNCATED]` unconditionally. Treat it as dead
+      code to drop in the port rather than behaviour to reproduce.
 - [ ] Multi-byte UTF-8 at a truncation boundary is never split. `unhack.md`
       item 4 says this is fixed; nothing non-ASCII is in any test.
 - [ ] CRLF line endings in the transcript.
-- [ ] Non-numeric numeric config. `CLAUDE_WATCHDOG_MIN_TOOL_USES=abc` parses to
-      `NaN`, `count < NaN` is false, and the gate is silently disabled. Same
-      for cooldown and max bytes. The port must decide (reject, or fall back to
-      the default) and a test must pin the decision.
-- [ ] Boolean config parsing: only `1` and `true` are truthy; `TRUE`, `yes`,
-      and `on` are falsy. Pin it.
-- [ ] `cfg()` precedence: `CLAUDE_WATCHDOG_*` beats `CLAUDE_PLUGIN_OPTION_*`
-      beats default. Tested for `MIN_TOOL_USES` only; the port will touch every
-      call site.
-- [ ] `projectRoot` walk stops at `$HOME` and at the filesystem root.
+- [x] Non-numeric numeric config. `CLAUDE_WATCHDOG_MIN_TOOL_USES=abc` parsed to
+      `NaN`, `count < NaN` is false, and the gate was silently disabled. Same
+      for cooldown and max bytes. DECIDED: fall back to the documented default
+      and log a `CONFIG:` warning; never reject, because every path in these
+      hooks fails open. Implemented on this branch for `MIN_TOOL_USES`,
+      `COOLDOWN_SECONDS`, `MAX_TRANSCRIPT_BYTES`, `CURSOR_TTL_DAYS`,
+      `LOG_MAX_LINES`, and the hold hook's `HOLD_TTL_SECONDS`; pinned in
+      `tests/config.sh`.
+- [x] Boolean config parsing: only `1` and `true` are truthy; `TRUE`, `yes`,
+      and `on` are falsy. Pinned in `tests/config.sh`. The strictness is
+      deliberate but undocumented - the port should keep it and say so in the
+      README.
+- [x] `cfg()` precedence: `CLAUDE_WATCHDOG_*` beats `CLAUDE_PLUGIN_OPTION_*`
+      beats default. `tests/config.sh` covers one string, one integer, and one
+      boolean setting. NOTE: `CLAUDE_PLUGIN_OPTION_legacy_hook` is lower-case
+      unlike every other plugin option, and `legacy_hook` is not declared in
+      `plugin.json` `userConfig`, so neither spelling is ever set in practice.
+- [x] `projectRoot` walk stops at `$HOME` and at the filesystem root.
+      `tests/config.sh`.
 
 ### Hold hook (`hold-input.mjs`)
 
-- [ ] `CLAUDE_WATCHDOG_HOLD_TTL_SECONDS <= 0` releases immediately.
-- [ ] Sentinel line 1 that is not a parseable date falls back to mtime.
-- [ ] A failed `nudged` rewrite still blocks this once.
+- [x] `CLAUDE_WATCHDOG_HOLD_TTL_SECONDS <= 0` releases immediately.
+      `tests/lifecycle.sh`.
+- [x] Sentinel line 1 that is not a parseable date falls back to mtime.
+      `tests/lifecycle.sh`, both fresh and expired.
+- [x] A failed `nudged` rewrite still blocks this once, and blocks again on the
+      next prompt because the override was never recorded. `tests/lifecycle.sh`.
 
 ### Persist hook (`persist-analysis.mjs`)
 
-- [ ] 20-file cap prunes oldest by mtime.
-- [ ] Filename format `<session_id>-YYYYMMDDTHHMMSSZ.md`.
-- [ ] 128 KB stdin cap.
+- [x] 20-file cap prunes oldest by mtime. `tests/lifecycle.sh`.
+- [x] Filename format `<session_id>-YYYYMMDDTHHMMSSZ.md`. `tests/lifecycle.sh`.
+- [x] 128 KB stdin cap. `tests/lifecycle.sh`: an oversized payload is truncated,
+      so the JSON no longer parses and the hook fails open without writing.
 
 ## 4. Fixtures and the undocumented external formats
 
