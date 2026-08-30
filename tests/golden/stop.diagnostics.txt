@@ -1,0 +1,1 @@
+[DIAGNOSTICS] raw=5032B condensed=5032B tool_uses=12 user_messages=10 mid_turn_messages=7 delta_start=1

@@ -1,0 +1,1 @@
+[<TIMESTAMP>] SKIP: delta has no file edits or mutating shell commands (read-only turn), cursor unchanged
