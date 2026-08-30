@@ -8,10 +8,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # Development happens on macOS and the suite leans on stat, mktemp, and
+        # date, which differ between GNU and BSD. Prove the harness is portable
+        # before asking it to prove a port is equivalent.
+        os: [ubuntu-latest, macos-latest]
         # Hooks run on whatever Node the user has on PATH, so test the maintained
         # LTS floor up to current rather than only the newest runtime.
         node-version: ['20', '22', '24']
@@ -22,8 +26,15 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Install jq and shellcheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+
+      - name: Install jq and shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          command -v jq >/dev/null || brew install jq
+          command -v shellcheck >/dev/null || brew install shellcheck
 
       - name: Install just
         uses: extractions/setup-just@v4
@@ -44,4 +55,4 @@ jobs:
             echo "test matrix did not succeed: ${{ needs.test.result }}"
             exit 1
           fi
-          echo "all Node versions passed"
+          echo "all matrix jobs passed"
