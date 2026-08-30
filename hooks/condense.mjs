@@ -90,10 +90,9 @@ function toolResultText(block, name) {
     // Non-text blocks become a typed placeholder. Dropping them left an
     // image-only result rendering as an empty body, so the analyzer could not
     // tell anything came back at all.
-    return block.content
+    return clip(block.content
       .map(c => (c.type === 'text' ? c.text : `[${c.type || 'unknown'}]`))
-      .join('\n')
-      .slice(0, max);
+      .join('\n'), max);
   }
   return '(no content)';
 }
