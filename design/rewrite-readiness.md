@@ -96,27 +96,27 @@ behaviour, not the accidental one.
 
 ### Stop hook (`session-analysis.mjs`)
 
-- [ ] `stop_reason != end_turn` skips (compaction, `tool_use`, `max_tokens`).
-- [ ] Missing or nonexistent `transcript_path` skips.
-- [ ] `.claude-watchdog-skip` in the hook cwd skips.
-- [ ] Read-only turn skips (`edits == 0 && mutatingBash == 0`), and the
+- [x] `stop_reason != end_turn` skips (compaction, `tool_use`, `max_tokens`).
+- [x] Missing or nonexistent `transcript_path` skips.
+- [x] `.claude-watchdog-skip` in the hook cwd skips.
+- [x] Read-only turn skips (`edits == 0 && mutatingBash == 0`), and the
       `READ_ONLY_BASH` regex itself: `sed -n` is read-only, `sed -i` is not,
       leading whitespace is tolerated, `git diff` yes but `git push` no.
-- [ ] Zero top-level user messages in the delta skips. Includes the definition
+- [x] Zero top-level user messages in the delta skips. Includes the definition
       of "top-level": a text block sharing an entry with a `tool_result` does
       not count.
-- [ ] `MultiEdit` and `NotebookEdit` (`notebook_path`) count as edits, and an
+- [x] `MultiEdit` and `NotebookEdit` (`notebook_path`) count as edits, and an
       `edited_text_file` attachment adds its filename to the touched list.
-- [ ] Touched-file paths are made relative to the hook cwd, and newlines are
+- [x] Touched-file paths are made relative to the hook cwd, and newlines are
       stripped from them.
-- [ ] `include_rules`: project files before global, files over 8 KB skipped,
+- [x] `include_rules`: project files before global, files over 8 KB skipped,
       16 KB total cap, `CLAUDE_WATCHDOG_INCLUDE_RULES=0` sends none, and the
       skip reason is logged.
-- [ ] `Previous analysis:` line appears in the prompt when a prior analysis
+- [x] `Previous analysis:` line appears in the prompt when a prior analysis
       file exists for the session, and points at the newest one.
-- [ ] `interactive_recommendations` switches the post-analysis instruction
+- [x] `interactive_recommendations` switches the post-analysis instruction
       block and the todo path.
-- [ ] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
+- [x] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
       stderr, exit 2, nothing on stdout.
 - [ ] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the
       `LOG ROTATED` line.
@@ -128,14 +128,17 @@ behaviour, not the accidental one.
       no user messages, empty condensed).
 - [ ] Directories are created 0700 and files land 0600 (umask), in both storage
       locations.
-- [ ] Garbage stdin and the 64 KB stdin cap fail open with exit 0 on the Stop
-      hook. The hold hook has this test; the Stop hook does not.
+- [x] Garbage stdin and the 64 KB stdin cap fail open with exit 0 on the Stop
+      hook.
 - [ ] `cwd` arriving as the literal string `"null"` falls back to global
       storage.
-- [ ] Empty condensed transcript skips.
-- [ ] Multi-byte UTF-8 at a truncation boundary is never split. `unhack.md`
-      item 4 says this is fixed; nothing non-ASCII is in any test.
-- [ ] CRLF line endings in the transcript.
+- [x] Empty condensed transcript skips. Covered at the `condense.mjs` CLI
+      level. The Stop hook's own guard is unreachable: any delta that passes
+      the edit and user-message gates emits at least one condensed line.
+- [x] Multi-byte UTF-8 at a truncation boundary is never split. `unhack.md`
+      item 4 only fixed the byte-budget path; the per-field caps still split
+      surrogate pairs. Fixed via `clip()` in `condense.mjs`.
+- [x] CRLF line endings in the transcript.
 - [ ] Non-numeric numeric config. `CLAUDE_WATCHDOG_MIN_TOOL_USES=abc` parses to
       `NaN`, `count < NaN` is false, and the gate is silently disabled. Same
       for cooldown and max bytes. The port must decide (reject, or fall back to

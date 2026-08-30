@@ -6,7 +6,7 @@ import {
 import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
-import { extractTranscript, condense, counts } from './condense.mjs';
+import { extractTranscript, condense, counts, clip } from './condense.mjs';
 
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
@@ -83,7 +83,7 @@ function capAnalyses() {
 }
 
 function truncateStrings(val, max) {
-  if (typeof val === 'string') return val.length > max ? val.slice(0, max) + '...[truncated]' : val;
+  if (typeof val === 'string') return val.length > max ? clip(val, max) + '...[truncated]' : val;
   if (Array.isArray(val)) return val.map(v => truncateStrings(v, max));
   if (val && typeof val === 'object') {
     const out = {};
