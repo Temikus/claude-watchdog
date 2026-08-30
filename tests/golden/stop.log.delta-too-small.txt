@@ -1,0 +1,1 @@
+[<TIMESTAMP>] SKIP: delta too small (12 < 15), cursor unchanged

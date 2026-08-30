@@ -1,0 +1,1 @@
+[<TIMESTAMP>] SKIP: cooldown active (<N>s < 600s since last trigger)

@@ -1,0 +1,1 @@
+[<TIMESTAMP>] SKIP: delta has no top-level user messages, cursor unchanged

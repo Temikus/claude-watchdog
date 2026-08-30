@@ -76,16 +76,35 @@ Generate byte-exact outputs from the current Node implementation before the
 port and commit them. The port must reproduce them with `diff -u`. Any
 intentional change updates the golden in the same PR.
 
-- [ ] `tests/golden/midturn.extract.txt` - `extract` output for the fixture.
-- [ ] `tests/golden/midturn.condense-4096.txt` and `-8192.txt` - the truncation
+Landed in `tests/golden.sh` (`just test-golden`, `just golden-regen`), with the
+placeholder table, budget arithmetic, and the update rule in
+`tests/golden/README.md`.
+
+- [x] `tests/golden/midturn.extract.txt` - `extract` output for the fixture.
+- [x] `tests/golden/midturn.condense-4096.txt` and `-2048.txt` - the truncation
       path: both user-thread ends, the elision marker, the unconditional
       `[TRUNCATED]` notice, and the 20/80 and 40/60 splits.
-- [ ] `tests/golden/stop.prompt.txt` - the `reason` string the Stop hook emits,
+      8192 cannot truncate this fixture (extract output is 5032 bytes, so
+      `condense()` returns it unchanged), so `-8192.txt` is kept as the
+      pass-through golden and 2048 is the second truncation budget. The
+      arithmetic for each is in `tests/golden/README.md`.
+- [x] `tests/golden/stop.prompt.txt` - the `reason` string the Stop hook emits,
       with tmp paths templated out. Wording is what the model acts on.
-- [ ] `tests/golden/stop.log.<skip-reason>.txt` - one per SKIP path. The README
+- [x] `tests/golden/stop.log.<skip-reason>.txt` - one per SKIP path. The README
       promises "every decision is logged" and users grep the log, so the log
       lines are a de facto API.
-- [ ] The verbose `[DIAGNOSTICS]` header, with counts.
+      14 of the 15 SKIP paths. `SKIP: condensed transcript is empty` is
+      unreachable: it sits behind the user-message gate, and every entry that
+      satisfies `isUserMessage()` also emits a `USER` line, so the condensed
+      text is never empty there.
+- [x] The verbose `[DIAGNOSTICS]` header, with counts.
+- [x] All unstable values (tmp paths, timestamps, session ids, durations,
+      hostnames) are normalised by a single `golden_normalise` used by both the
+      generator and the comparator. Determinism verified by regenerating twice
+      and diffing.
+- [x] The deferred half of the section-1 label check: every entry in
+      `tests/labels.txt` is asserted to appear in a `midturn.*` golden, so the
+      list cannot go stale in either direction.
 
 ## 3. Untested behaviours
 
