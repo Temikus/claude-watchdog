@@ -1,10 +1,13 @@
 # Capturing fixtures
 
 The hook event payloads and the transcript JSONL are undocumented external
-formats that move between Claude Code releases. Everything under
-`tests/fixtures/events/` is currently **reconstructed** from `hooks/hooks.json`,
-the hook source, and the `jq -n` literals the suite used before. Reconstruction
-is a guess. This file is how you replace a guess with a capture.
+formats that move between Claude Code releases. Most fixtures under
+`tests/fixtures/events/` are still **reconstructed** from `hooks/hooks.json`,
+the hook source, and the `jq -n` literals the suite used before - only
+`prompt-submit.json` is a real **captured** payload so far. Reconstruction
+is a guess. This file is how you replace a guess with a capture. Each
+fixture's own `_fixture.status` is authoritative; check that field, not
+this paragraph.
 
 ## 1. Capture raw hook events
 
