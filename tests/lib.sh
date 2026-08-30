@@ -81,14 +81,29 @@ outcome() {
 
 # --- payloads and transcripts ----------------------------------------------
 
+# event_fixture <name> [jq-object-fragment]
+# Loads tests/fixtures/events/<name>.json as the base event, strips the
+# `_fixture` provenance block, and merges the fragment over it. Tests build
+# payloads from these files rather than from inline literals so that replacing a
+# reconstructed fixture with a real capture updates the whole suite at once.
+# See tests/fixtures/CAPTURE.md.
+event_fixture() {
+  local name="$1" extra="${2:-}"
+  [ -n "$extra" ] || extra='{}'
+  jq -c "with_entries(select(.key | startswith(\"_\") | not)) + $extra" \
+    "tests/fixtures/events/${name}.json"
+}
+
 # stop_payload <session-id> <transcript-path> <cwd> [jq-object-fragment]
-# The fragment is a jq object expression merged over the base event, e.g.
-# '{stop_hook_active:true}'.
+# Layered over the stop-plain event fixture, so every Stop-hook test runs
+# against the real event shape rather than a four-field literal. The fragment is
+# a jq object expression merged last, e.g. '{stop_hook_active:true}'.
 stop_payload() {
   local sid="$1" tp="$2" cwd="$3" extra="${4:-}"
   [ -n "$extra" ] || extra='{}'
-  jq -n --arg sid "$sid" --arg tp "$tp" --arg cwd "$cwd" \
-    "{session_id:\$sid, transcript_path:\$tp, cwd:\$cwd, stop_reason:\"end_turn\"} + $extra"
+  event_fixture stop-plain \
+    "$(jq -n --arg sid "$sid" --arg tp "$tp" --arg cwd "$cwd" \
+        '{session_id:$sid, transcript_path:$tp, cwd:$cwd}')  + $extra"
 }
 
 # mk_msg <user|assistant> <uuid> <text>

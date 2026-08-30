@@ -1,0 +1,16 @@
+{
+  "_fixture": {
+    "status": "reconstructed",
+    "source": "hooks/hooks.json, hooks/session-analysis.mjs, and the jq -n literals in tests/",
+    "note": "NOT captured from a real Claude Code run. Replace with a real capture - see tests/fixtures/CAPTURE.md.",
+    "claude_code_version": "unknown"
+  },
+  "hook_event_name": "Stop",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/example/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "permission_mode": "default",
+  "stop_reason": "end_turn",
+  "stop_hook_active": false,
+  "last_assistant_message": ""
+}

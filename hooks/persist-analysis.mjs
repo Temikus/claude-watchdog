@@ -5,6 +5,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { dumpEvent } from './dump-events.mjs';
 
 const LOG_FILE = process.env.CLAUDE_WATCHDOG_LOG ?? join(homedir(), '.claude/logs/claude-watchdog.log');
 const ANALYSES_DIR = process.env.CLAUDE_WATCHDOG_ANALYSES_DIR ?? join(homedir(), '.claude/logs/claude-watchdog-analyses');
@@ -21,6 +22,7 @@ function log(msg) {
 
 try {
   const input = readFileSync(0).slice(0, 131072).toString('utf8');
+  dumpEvent('subagent-stop', input);
   const event = JSON.parse(input);
 
   const agentType = event.agent_type ?? '';

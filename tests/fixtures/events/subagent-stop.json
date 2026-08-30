@@ -1,0 +1,17 @@
+{
+  "_fixture": {
+    "status": "reconstructed",
+    "source": "hooks/hooks.json SubagentStop matcher, hooks/persist-analysis.mjs, tests/persist.sh",
+    "note": "NOT captured from a real run. agent_id format in particular is a guess.",
+    "claude_code_version": "unknown"
+  },
+  "hook_event_name": "SubagentStop",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/example/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "permission_mode": "default",
+  "stop_hook_active": false,
+  "agent_id": "agent_01ReconstructedNotReal",
+  "agent_type": "session-analyzer",
+  "last_assistant_message": "### Goals\nThe session set out to add caching and did.\n\n### Recommendations\n- **Pin the cache key** [code] - the key currently ignores the lockfile.\n"
+}

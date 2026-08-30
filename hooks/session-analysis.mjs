@@ -7,6 +7,7 @@ import { dirname, join, parse as parsePath, relative, resolve } from 'node:path'
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
 import { extractTranscript, condense, counts } from './condense.mjs';
+import { dumpEvent } from './dump-events.mjs';
 
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
@@ -227,6 +228,7 @@ try {
   }
 
   const input = readFileSync(0).slice(0, 65536).toString('utf8');
+  dumpEvent('stop', input);
   const event = JSON.parse(input);
 
   const sessionId = event.session_id;

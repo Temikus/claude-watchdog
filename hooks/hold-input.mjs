@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, unlinkSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { dumpEvent } from './dump-events.mjs';
 
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
@@ -32,6 +33,7 @@ try {
   mkdirSync(dirname(LOG_FILE), { recursive: true });
 
   const input = readFileSync(0).slice(0, 65536).toString('utf8');
+  dumpEvent('prompt-submit', input);
   const event = JSON.parse(input);
 
   const sessionId = event.session_id ?? '';

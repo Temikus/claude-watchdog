@@ -1,0 +1,21 @@
+{
+  "_fixture": {
+    "status": "reconstructed",
+    "source": "hooks/session-analysis.mjs background-task guard; tests/cursor.sh Test 21",
+    "note": "background_tasks and session_crons arrive on Stop in Claude Code >= 2.1.145. The per-task object shape beyond `type` is a guess and needs a real capture.",
+    "claude_code_version": ">=2.1.145"
+  },
+  "hook_event_name": "Stop",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/example/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "permission_mode": "default",
+  "stop_reason": "end_turn",
+  "stop_hook_active": false,
+  "last_assistant_message": "",
+  "background_tasks": [
+    {"type": "subagent", "id": "agent_01ReconstructedNotReal"},
+    {"type": "shell", "id": "bash_01ReconstructedNotReal"}
+  ],
+  "session_crons": []
+}

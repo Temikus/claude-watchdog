@@ -1,0 +1,16 @@
+{
+  "_fixture": {
+    "status": "reconstructed",
+    "source": "hooks/session-analysis.mjs echo-sentinel logic; tests/cursor.sh Test 18 phase 2",
+    "note": "The Stop that follows our own decision:block - Claude Code sets stop_hook_active=true on any Stop that is itself the result of a Stop-hook block. NOT captured from a real run.",
+    "claude_code_version": "unknown"
+  },
+  "hook_event_name": "Stop",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/example/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "permission_mode": "default",
+  "stop_reason": "end_turn",
+  "stop_hook_active": true,
+  "last_assistant_message": "I have finished presenting the session analysis."
+}
