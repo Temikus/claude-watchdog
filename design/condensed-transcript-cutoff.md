@@ -69,7 +69,7 @@ Fixes #1, #3, and #5 have landed. What remains is **#2** (goal anchor, the immed
 ## Verification notes
 File paths and symbols referenced above were confirmed present on `main` at time of writing:
 - `session-analysis.mjs:17` — `CONDENSED_MAX_BYTES` default `51200`
-- `session-analysis.mjs:378–392` — truncation path; `USER_BUDGET` (385), `userBuf.slice(0, USER_BUDGET)` (392). Since moved to `hooks/condense.mjs` (`takeLines`, `clampUserLines`, `condense`) as part of fix #3.
+- `session-analysis.mjs:378-392` - truncation path; `USER_BUDGET` (385), `userBuf.slice(0, USER_BUDGET)` (392). Since moved to `hooks/condense.mjs` (`takeLines`, `clampUserLines`, `condense`) as part of fix #3.
 - `session-analysis.mjs:411` — `[DIAGNOSTICS]` header emission
 - `persist-analysis.mjs:26` — existing `event.last_assistant_message ?? ''` usage (precedent for fix #1)
 - `hooks/cursor-slice.mjs` — delta/cursor mechanism (fix #2)
