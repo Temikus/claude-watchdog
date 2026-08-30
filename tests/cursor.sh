@@ -1,0 +1,429 @@
+#!/usr/bin/env bash
+# Cursor / delta-analysis behaviour, driven end to end through the Stop hook.
+#
+# Numbering follows the original suite. Test 1 (a unit test of the
+# `cursor-slice slice|last-uuid` helper CLI) was dropped as an internal API:
+# tests 4, 5, and 6 cover the same slicing behaviour through the hook.
+# shellcheck source=tests/lib.sh
+. "$(dirname "$0")/lib.sh"
+
+export WATCHDOG_DIR="$HOME/.claude/tmp/claude-watchdog/sessions"
+mkdir -p "$WATCHDOG_DIR"
+# Storage defaults to project-local; pin these generic cursor/delta tests to the
+# global path so they can anchor on WATCHDOG_DIR. The project-local default is
+# covered explicitly by the local-storage tests (15/16), which override this.
+export CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=0
+
+TMPROOT=$(mktemp -d)
+TEST_LOG="$TMPROOT/log"
+trap 'rm -rf "$TMPROOT"' EXIT
+
+# run_hook <session_id> <transcript_path> -> prints outcome (BLOCK|SKIP|ERR:<code>)
+run_hook() {
+  run_stop "$(stop_payload "$1" "$2" "$PWD")" \
+    CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+  outcome "$STOP_OUT" "$STOP_RC"
+}
+
+cleanup_session() {
+  local sid="$1"
+  rm -f "$WATCHDOG_DIR/cursor-${sid}.txt" \
+        "$WATCHDOG_DIR/condensed-${sid}.txt" \
+        "$WATCHDOG_DIR/raw-${sid}.txt" \
+        "$WATCHDOG_DIR/delta-${sid}.tmp" \
+        "$WATCHDOG_DIR/echo-${sid}" \
+        "$WATCHDOG_DIR/pending-${sid}" \
+        "$HOME/.claude/logs/claude-watchdog-analyses/${sid}-"*.md 2>/dev/null || true
+  rmdir "$WATCHDOG_DIR/${sid}" 2>/dev/null || true
+}
+
+# --- Test 2: first-run (no cursor, full transcript processed) ---
+sid2="cursor-t2-$$"
+cleanup_session "$sid2"
+t2_transcript="$TMPROOT/t2.jsonl"
+mk_transcript "$t2_transcript" 1 5 OLD
+oc=$(run_hook "$sid2" "$t2_transcript")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "first-run-exit" "expected BLOCK got $oc"; }
+[ -f "$WATCHDOG_DIR/cursor-${sid2}.txt" ] || fail "first-run-cursor-exists" "cursor file missing"
+line1=$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid2}.txt")
+[ "$line1" = "a-OLD-5" ] || fail "first-run-cursor-uuid" "expected a-OLD-5 got $line1"
+line3=$(sed -n '3p' "$WATCHDOG_DIR/cursor-${sid2}.txt")
+[ "$line3" = "$t2_transcript" ] || fail "first-run-cursor-path" "expected $t2_transcript got $line3"
+cleanup_session "$sid2"
+pass "first-run"
+
+# --- Test 3: trivial-delta (below MIN_TOOL_USES, cursor unchanged) ---
+sid3="cursor-t3-$$"
+cleanup_session "$sid3"
+t3_transcript="$TMPROOT/t3.jsonl"
+mk_transcript "$t3_transcript" 1 5 OLD
+# seed cursor at line 10 (last line, a-OLD-5)
+printf 'a-OLD-5\n10\n%s\n' "$t3_transcript" > "$WATCHDOG_DIR/cursor-${sid3}.txt"
+# append 1 new round (2 messages, 1 tool_use) -> below MIN_TOOL_USES=3
+mk_msg user "u-NEW-1" "NEW user 1" >> "$t3_transcript"
+mk_msg assistant "a-NEW-1" "NEW assistant 1" >> "$t3_transcript"
+oc=$(run_hook "$sid3" "$t3_transcript")
+[ "$oc" = "SKIP" ] || { cat "$TEST_LOG"; fail "trivial-delta-exit" "expected SKIP got $oc"; }
+grep -q "SKIP: delta too small" "$TEST_LOG" || fail "trivial-delta-log" "no SKIP log"
+line1=$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid3}.txt")
+[ "$line1" = "a-OLD-5" ] || fail "trivial-delta-cursor-unchanged" "cursor moved: $line1"
+cleanup_session "$sid3"
+pass "trivial-delta"
+
+# --- Test 4: substantial-delta (cursor advances, condensed contains only new) ---
+sid4="cursor-t4-$$"
+cleanup_session "$sid4"
+t4_transcript="$TMPROOT/t4.jsonl"
+mk_transcript "$t4_transcript" 1 3 OLDMARK
+# cursor at last OLD message (line 6, a-OLDMARK-3)
+printf 'a-OLDMARK-3\n6\n%s\n' "$t4_transcript" > "$WATCHDOG_DIR/cursor-${sid4}.txt"
+# append 3 new rounds (3 tool_uses total) - passes MIN_TOOL_USES
+for i in 1 2 3; do
+  mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t4_transcript"
+  mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t4_transcript"
+done
+oc=$(run_hook "$sid4" "$t4_transcript")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "substantial-delta-exit" "expected BLOCK got $oc"; }
+condensed="$WATCHDOG_DIR/condensed-${sid4}.txt"
+[ -f "$condensed" ] || fail "substantial-delta-condensed" "no condensed file"
+grep -q "NEWMARK" "$condensed" || fail "substantial-delta-has-new" "NEWMARK missing"
+if grep -q "OLDMARK" "$condensed"; then fail "substantial-delta-no-old" "OLDMARK leaked into condensed"; fi
+line1=$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid4}.txt")
+[ "$line1" = "a-NEWMARK-3" ] || fail "substantial-delta-cursor-advanced" "expected a-NEWMARK-3 got $line1"
+cleanup_session "$sid4"
+pass "substantial-delta"
+
+# --- Test 5: stale-transcript (cursor points to missing file) ---
+sid5="cursor-t5-$$"
+cleanup_session "$sid5"
+t5_transcript="$TMPROOT/t5.jsonl"
+mk_transcript "$t5_transcript" 1 5 OLD
+printf 'a-OLD-5\n10\n%s\n' "$TMPROOT/nonexistent.jsonl" > "$WATCHDOG_DIR/cursor-${sid5}.txt"
+oc=$(run_hook "$sid5" "$t5_transcript")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "stale-transcript-exit" "expected BLOCK got $oc"; }
+grep -q "CURSOR: stale transcript path" "$TEST_LOG" || fail "stale-transcript-log" "no stale log"
+cleanup_session "$sid5"
+pass "stale-transcript"
+
+# --- Test 6: uuid-fallback (wrong line hint, uuid scan resolves) ---
+sid6="cursor-t6-$$"
+cleanup_session "$sid6"
+t6_transcript="$TMPROOT/t6.jsonl"
+mk_transcript "$t6_transcript" 1 3 OLDMARK
+# cursor uuid correct, line hint wrong
+printf 'a-OLDMARK-3\n9999\n%s\n' "$t6_transcript" > "$WATCHDOG_DIR/cursor-${sid6}.txt"
+for i in 1 2 3; do
+  mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t6_transcript"
+  mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t6_transcript"
+done
+oc=$(run_hook "$sid6" "$t6_transcript")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "uuid-fallback-exit" "expected BLOCK got $oc"; }
+condensed="$WATCHDOG_DIR/condensed-${sid6}.txt"
+if grep -q "OLDMARK" "$condensed"; then fail "uuid-fallback-isolation" "OLDMARK leaked despite fallback"; fi
+cleanup_session "$sid6"
+pass "uuid-fallback"
+
+# --- Test 7: concurrency (second invocation skips via lock) ---
+sid7="cursor-t7-$$"
+cleanup_session "$sid7"
+t7_transcript="$TMPROOT/t7.jsonl"
+mk_transcript "$t7_transcript" 1 5 OLD
+# Pre-create the marker dir to simulate an in-progress run
+mkdir -p "$WATCHDOG_DIR/${sid7}"
+oc=$(run_hook "$sid7" "$t7_transcript")
+[ "$oc" = "SKIP" ] || { cat "$TEST_LOG"; fail "concurrency-exit" "expected SKIP got $oc"; }
+grep -q "SKIP: concurrent run already in progress" "$TEST_LOG" || fail "concurrency-log" "no concurrent-run log"
+# The second invocation should not delete the marker dir it didn't acquire
+[ -d "$WATCHDOG_DIR/${sid7}" ] || fail "concurrency-marker-preserved" "marker dir was removed"
+rmdir "$WATCHDOG_DIR/${sid7}"
+cleanup_session "$sid7"
+pass "concurrency"
+
+# --- Test 8: ttl-cleanup (stale cursor pruned) ---
+sid8="cursor-t8-$$"
+cleanup_session "$sid8"
+stale_cursor="$WATCHDOG_DIR/cursor-${sid8}.txt"
+printf 'stale\n0\n/nope\n' > "$stale_cursor"
+touch -t 202001010000 "$stale_cursor"
+t8_transcript="$TMPROOT/t8.jsonl"
+mk_transcript "$t8_transcript" 1 5 OLD
+# run the hook (under any session_id); cleanup runs at top regardless
+run_hook "fresh-$$" "$t8_transcript" >/dev/null || true
+if [ -f "$stale_cursor" ]; then fail "ttl-cleanup" "stale cursor was not deleted"; fi
+cleanup_session "fresh-$$"
+pass "ttl-cleanup"
+
+# --- Test 9: malformed-cursor (bogus uuid / non-integer line is rejected, no shell injection) ---
+sid9="cursor-t9-$$"
+cleanup_session "$sid9"
+t9_transcript="$TMPROOT/t9.jsonl"
+mk_transcript "$t9_transcript" 1 3 OLDMARK
+# Adversarial cursor: shell metacharacters in uuid, non-integer line number
+printf 'evil; touch %s/pwned\nnot-a-number\n%s\n' "$TMPROOT" "$t9_transcript" > "$WATCHDOG_DIR/cursor-${sid9}.txt"
+for i in 1 2 3; do
+  mk_msg user "u-NEWMARK-$i" "NEWMARK user $i" >> "$t9_transcript"
+  mk_msg assistant "a-NEWMARK-$i" "NEWMARK assistant $i" >> "$t9_transcript"
+done
+oc=$(run_hook "$sid9" "$t9_transcript")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "malformed-cursor-exit" "expected BLOCK got $oc"; }
+[ ! -f "$TMPROOT/pwned" ] || fail "malformed-cursor-injection" "shell injection succeeded: pwned file exists"
+grep -q "CURSOR: malformed uuid" "$TEST_LOG" || fail "malformed-cursor-log" "no malformed-uuid log"
+cleanup_session "$sid9"
+pass "malformed-cursor"
+
+# --- Test 10: cooldown (second trigger within window is skipped) ---
+sid10="cursor-t10-$$"
+cleanup_session "$sid10"
+t10_transcript="$TMPROOT/t10.jsonl"
+mk_transcript "$t10_transcript" 1 5 OLD
+payload10=$(stop_payload "$sid10" "$t10_transcript" "$PWD")
+# First run: no cursor yet, should trigger
+run_stop "$payload10" CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "cooldown-first-run" "expected BLOCK got $oc"; }
+# Append enough new tool uses to clear MIN_TOOL_USES
+for i in 1 2 3; do
+  mk_msg user "u-COOL-$i" "COOL user $i" >> "$t10_transcript"
+  mk_msg assistant "a-COOL-$i" "COOL assistant $i" >> "$t10_transcript"
+done
+# Second run: cursor mtime is fresh, cooldown=60s should skip
+run_stop "$payload10" CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=60
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "SKIP" ] || { cat "$TEST_LOG"; fail "cooldown-second-run" "expected SKIP got $oc"; }
+grep -q "SKIP: cooldown active" "$TEST_LOG" || fail "cooldown-log" "no cooldown log"
+# Third run with cooldown=0 should trigger again, proving the gate is the only thing blocking
+run_stop "$payload10" CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "cooldown-disabled" "expected BLOCK got $oc"; }
+cleanup_session "$sid10"
+pass "cooldown"
+
+# --- Test 11: userConfig fallback (CLAUDE_PLUGIN_OPTION_* used when legacy var unset) ---
+sid11="cursor-t11-$$"
+cleanup_session "$sid11"
+t11_transcript="$TMPROOT/t11.jsonl"
+mk_transcript "$t11_transcript" 1 5 OLD
+run_stop "$(stop_payload "$sid11" "$t11_transcript" "$PWD")" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=3 CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "userconfig-fallback" "expected BLOCK got $oc"; }
+cleanup_session "$sid11"
+pass "userconfig-fallback"
+
+# --- Test 12: userConfig disabled=true skips analysis ---
+sid12="cursor-t12-$$"
+cleanup_session "$sid12"
+t12_transcript="$TMPROOT/t12.jsonl"
+mk_transcript "$t12_transcript" 1 5 OLD
+run_stop "$(stop_payload "$sid12" "$t12_transcript" "$PWD")" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_PLUGIN_OPTION_DISABLED=true
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "SKIP" ] || { cat "$TEST_LOG"; fail "userconfig-disabled" "expected SKIP got $oc"; }
+grep -q "SKIP: disabled via configuration" "$TEST_LOG" || fail "userconfig-disabled-log" "no disabled log"
+cleanup_session "$sid12"
+pass "userconfig-disabled"
+
+# --- Test 13: legacy env var overrides CLAUDE_PLUGIN_OPTION_* ---
+sid13="cursor-t13-$$"
+cleanup_session "$sid13"
+t13_transcript="$TMPROOT/t13.jsonl"
+mk_transcript "$t13_transcript" 1 5 OLD
+# Legacy MIN_TOOL_USES=3 should win over CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999
+run_stop "$(stop_payload "$sid13" "$t13_transcript" "$PWD")" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 \
+  CLAUDE_PLUGIN_OPTION_MIN_TOOL_USES=999 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "legacy-overrides-plugin" "expected BLOCK got $oc (legacy var should win over plugin option)"; }
+cleanup_session "$sid13"
+pass "legacy-overrides-plugin"
+
+# --- Test 14: CLAUDE_WATCHDOG_VERBOSE=1 adds truncation header ---
+sid14="cursor-t14-$$"
+cleanup_session "$sid14"
+t14_transcript="$TMPROOT/t14.jsonl"
+# Generate enough data to exceed a tiny MAX_BYTES budget
+mk_transcript "$t14_transcript" 1 20 VERBOSE
+run_stop "$(stop_payload "$sid14" "$t14_transcript" "$PWD")" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_MAX_BYTES=512 CLAUDE_WATCHDOG_VERBOSE=1
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "verbose-trigger" "expected BLOCK got $oc"; }
+condensed14="$WATCHDOG_DIR/condensed-${sid14}.txt"
+[ -f "$condensed14" ] || fail "verbose-condensed-exists" "condensed file not found"
+grep -q "\\[TRUNCATED\\]" "$condensed14" || { cat "$condensed14"; fail "verbose-header" "truncation header not found in condensed output"; }
+cleanup_session "$sid14"
+pass "verbose-truncation-header"
+
+# --- Test 15: local-storage stores files in project-local path ---
+sid15="cursor-t15-$$"
+cleanup_session "$sid15"
+t15_cwd="$TMPROOT/fake-project"
+mkdir -p "$t15_cwd"
+t15_transcript="$TMPROOT/t15.jsonl"
+mk_transcript "$t15_transcript" 1 5 LOCAL
+run_stop "$(stop_payload "$sid15" "$t15_transcript" "$t15_cwd")" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "local-storage-exit" "expected BLOCK got $oc"; }
+local_sessions="$t15_cwd/.claude/tmp/claude-watchdog/sessions"
+[ -f "$local_sessions/condensed-${sid15}.txt" ] || fail "local-storage-file" "condensed not in local path"
+if [ -f "$WATCHDOG_DIR/condensed-${sid15}.txt" ]; then fail "local-storage-global-leaked" "condensed found in global path"; fi
+grep -q "LOCAL_STORAGE: using project-local path" "$TEST_LOG" || fail "local-storage-log" "no local storage log"
+rm -rf "$t15_cwd/.claude"
+cleanup_session "$sid15"
+pass "local-storage"
+
+# --- Test 16: local-storage fallback on invalid cwd ---
+sid16="cursor-t16-$$"
+cleanup_session "$sid16"
+t16_transcript="$TMPROOT/t16.jsonl"
+mk_transcript "$t16_transcript" 1 5 FALLBACK
+run_stop "$(stop_payload "$sid16" "$t16_transcript" "$TMPROOT/nonexistent-dir")" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$TEST_LOG"; fail "local-fallback-exit" "expected BLOCK got $oc"; }
+[ -f "$WATCHDOG_DIR/condensed-${sid16}.txt" ] || fail "local-fallback-global" "condensed not in global path"
+grep -q "LOCAL_STORAGE: hook_cwd empty or invalid" "$TEST_LOG" || fail "local-fallback-log" "no fallback log"
+cleanup_session "$sid16"
+pass "local-storage-fallback"
+
+# --- Test 17: subagent/teammate skip (agent_id present) ---
+sid17="cursor-t17-$$"
+cleanup_session "$sid17"
+t17_transcript="$TMPROOT/t17.jsonl"
+mk_transcript "$t17_transcript" 1 5 OLD
+run_stop "$(stop_payload "$sid17" "$t17_transcript" "$PWD" '{agent_id:"some-agent-id", agent_type:"general-purpose"}')" \
+  CLAUDE_WATCHDOG_LOG="$TEST_LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "SKIP" ] || { cat "$TEST_LOG"; fail "subagent-skip-exit" "expected SKIP got $oc"; }
+grep -q "SKIP: running inside subagent/teammate" "$TEST_LOG" || fail "subagent-skip-log" "no subagent skip log"
+[ ! -f "$WATCHDOG_DIR/condensed-${sid17}.txt" ] || fail "subagent-skip-no-condensed" "condensed file should not exist"
+cleanup_session "$sid17"
+pass "subagent-teammate-skip"
+
+# --- Test 18: echo-cycle (suppress our own analyzer echo exactly once) ---
+sid18="cursor-t18-$$"
+cleanup_session "$sid18"
+t18_transcript="$TMPROOT/t18.jsonl"
+mk_transcript "$t18_transcript" 1 5 OLD
+# Phase 1: substantial delta, fresh turn (stop_hook_active:false) -> TRIGGER and
+# the self-owned echo sentinel must now exist.
+log18p1="$TMPROOT/log-t18p1"
+run_stop "$(stop_payload "$sid18" "$t18_transcript" "$PWD" '{stop_hook_active:false}')" \
+  CLAUDE_WATCHDOG_LOG="$log18p1" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+[ "$STOP_RC" = "0" ] || { cat "$log18p1"; fail "echo-cycle-p1-exit" "expected 0 got $STOP_RC"; }
+grep -q "TRIGGER:" "$log18p1" || { cat "$log18p1"; fail "echo-cycle-p1-trigger" "expected TRIGGER on the first (fresh) turn"; }
+[ -f "$WATCHDOG_DIR/echo-${sid18}" ] || fail "echo-cycle-p1-sentinel" "echo sentinel not written after TRIGGER"
+# Phase 2: same sid, the analyzer's resulting Stop carries stop_hook_active:true.
+# Fresh log so the assertion can't match Phase 1. Cooldown=0 proves the echo
+# sentinel (not the cooldown) is what suppresses this turn.
+log18p2="$TMPROOT/log-t18p2"
+run_stop "$(stop_payload "$sid18" "$t18_transcript" "$PWD" '{stop_hook_active:true}')" \
+  CLAUDE_WATCHDOG_LOG="$log18p2" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+[ "$STOP_RC" = "0" ] || { cat "$log18p2"; fail "echo-cycle-p2-exit" "expected 0 got $STOP_RC"; }
+grep -q "SKIP: our own analyzer echo" "$log18p2" || { cat "$log18p2"; fail "echo-cycle-p2-skip" "expected our-own-echo skip log"; }
+if grep -q "TRIGGER:" "$log18p2"; then fail "echo-cycle-p2-no-trigger" "must not trigger on our own echo"; fi
+[ ! -f "$WATCHDOG_DIR/echo-${sid18}" ] || fail "echo-cycle-p2-sentinel-cleared" "echo sentinel must be removed after the skip"
+cleanup_session "$sid18"
+pass "echo-cycle"
+
+# --- Test 19: foreign continuation still fires (encodes the #8 fix) ---
+# stop_hook_active:true but NO echo sentinel => the continuation came from another
+# plugin's Stop hook, not ours. The watchdog MUST NOT suppress it. (Under #8's
+# flag-only guard this would have been wrongly skipped.)
+sid19="cursor-t19-$$"
+cleanup_session "$sid19"
+t19_transcript="$TMPROOT/t19.jsonl"
+mk_transcript "$t19_transcript" 1 5 OLD
+log19="$TMPROOT/log-t19"
+run_stop "$(stop_payload "$sid19" "$t19_transcript" "$PWD" '{stop_hook_active:true}')" \
+  CLAUDE_WATCHDOG_LOG="$log19" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+[ "$STOP_RC" = "0" ] || { cat "$log19"; fail "foreign-continuation-exit" "expected 0 got $STOP_RC"; }
+grep -q "TRIGGER:" "$log19" || { cat "$log19"; fail "foreign-continuation-trigger" "expected TRIGGER for a foreign continuation"; }
+if grep -q "SKIP: our own analyzer echo" "$log19"; then fail "foreign-continuation-no-skip" "must not treat a foreign continuation as our echo"; fi
+cleanup_session "$sid19"
+pass "foreign-continuation"
+
+# --- Test 20: stale sentinel + fresh turn clears, then still fires ---
+# A leftover sentinel (we blocked but the analyzer's echo Stop never arrived, e.g.
+# the session closed). On a fresh end_turn it must be cleared, not treated as an
+# echo, and the substantial delta must still TRIGGER.
+sid20="cursor-t20-$$"
+cleanup_session "$sid20"
+t20_transcript="$TMPROOT/t20.jsonl"
+mk_transcript "$t20_transcript" 1 5 OLD
+printf 'stale-marker\n' > "$WATCHDOG_DIR/echo-${sid20}"
+# A leftover input-hold sentinel must be cleared on the same stale path,
+# regardless of whether the hold option is currently enabled.
+printf 'stale-pending\n' > "$WATCHDOG_DIR/pending-${sid20}"
+log20="$TMPROOT/log-t20"
+run_stop "$(stop_payload "$sid20" "$t20_transcript" "$PWD" '{stop_hook_active:false}')" \
+  CLAUDE_WATCHDOG_LOG="$log20" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+[ "$STOP_RC" = "0" ] || { cat "$log20"; fail "stale-sentinel-exit" "expected 0 got $STOP_RC"; }
+grep -q "ECHO: stale sentinel cleared" "$log20" || { cat "$log20"; fail "stale-sentinel-log" "expected stale-sentinel-cleared log"; }
+grep -q "TRIGGER:" "$log20" || { cat "$log20"; fail "stale-sentinel-trigger" "expected TRIGGER after clearing the stale sentinel"; }
+# The stale sentinel was removed; the TRIGGER then writes a fresh timestamped one,
+# so the file exists but no longer holds the stale marker.
+if grep -q "stale-marker" "$WATCHDOG_DIR/echo-${sid20}" 2>/dev/null; then fail "stale-sentinel-not-cleared" "stale sentinel content survived"; fi
+[ ! -f "$WATCHDOG_DIR/pending-${sid20}" ] || fail "stale-pending-cleared" "stale pending sentinel survived the fresh turn"
+cleanup_session "$sid20"
+pass "stale-sentinel"
+
+# --- Test 21: background_tasks in flight -> SKIP (session paused, not done) ---
+sid21="cursor-t21-$$"
+cleanup_session "$sid21"
+log21="$TMPROOT/log-t21"
+# Substantial delta (same transcript Test 22 fires on), but a non-empty
+# background_tasks array means the session is merely paused -> defer.
+run_stop "$(stop_payload "$sid21" "$t18_transcript" "$PWD" '{background_tasks:[{type:"subagent",id:"a1"},{type:"shell",id:"s1"}]}')" \
+  CLAUDE_WATCHDOG_LOG="$log21" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "SKIP" ] || { cat "$log21"; fail "bg-tasks-skip-exit" "expected SKIP got $oc"; }
+grep -q "SKIP: 2 background task(s) in flight (subagent,shell)" "$log21" || { cat "$log21"; fail "bg-tasks-skip-log" "no background-task skip log"; }
+[ ! -f "$WATCHDOG_DIR/condensed-${sid21}.txt" ] || fail "bg-tasks-no-condensed" "condensed file should not exist"
+[ ! -f "$WATCHDOG_DIR/cursor-${sid21}.txt" ] || fail "bg-tasks-no-cursor" "cursor should not be created"
+cleanup_session "$sid21"
+pass "background-tasks-skip"
+
+# --- Test 22: background_tasks absent (old Claude Code) -> TRIGGER (feature-detect) ---
+sid22="cursor-t22-$$"
+cleanup_session "$sid22"
+log22="$TMPROOT/log-t22"
+# No background_tasks field at all, as on Claude Code < 2.1.145: must behave as before.
+run_stop "$(stop_payload "$sid22" "$t18_transcript" "$PWD")" \
+  CLAUDE_WATCHDOG_LOG="$log22" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$log22"; fail "bg-tasks-absent-exit" "expected BLOCK got $oc"; }
+if grep -q "background task(s) in flight" "$log22"; then fail "bg-tasks-absent-no-skip" "must not skip when background_tasks is absent"; fi
+cleanup_session "$sid22"
+pass "background-tasks-absent-triggers"
+
+# --- Test 23: opt-out (CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0) -> TRIGGER ---
+sid23="cursor-t23-$$"
+cleanup_session "$sid23"
+log23="$TMPROOT/log-t23"
+run_stop "$(stop_payload "$sid23" "$t18_transcript" "$PWD" '{background_tasks:[{type:"subagent",id:"a1"}]}')" \
+  CLAUDE_WATCHDOG_LOG="$log23" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "BLOCK" ] || { cat "$log23"; fail "bg-tasks-optout-exit" "expected BLOCK got $oc (opt-out should let it fire)"; }
+if grep -q "background task(s) in flight" "$log23"; then fail "bg-tasks-optout-no-skip" "must not skip when opted out"; fi
+cleanup_session "$sid23"
+pass "background-tasks-opt-out"
+
+# --- Test 24: session cron already scheduled for the analyzer -> SKIP ---
+sid24="cursor-t24-$$"
+cleanup_session "$sid24"
+log24="$TMPROOT/log-t24"
+run_stop "$(stop_payload "$sid24" "$t18_transcript" "$PWD" '{session_crons:[{prompt:"/loop /analyze-session"}]}')" \
+  CLAUDE_WATCHDOG_LOG="$log24" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+oc=$(outcome "$STOP_OUT" "$STOP_RC")
+[ "$oc" = "SKIP" ] || { cat "$log24"; fail "session-cron-skip-exit" "expected SKIP got $oc"; }
+grep -q "SKIP: analysis already scheduled via session cron" "$log24" || { cat "$log24"; fail "session-cron-skip-log" "no session-cron skip log"; }
+[ ! -f "$WATCHDOG_DIR/condensed-${sid24}.txt" ] || fail "session-cron-no-condensed" "condensed file should not exist"
+cleanup_session "$sid24"
+pass "session-cron-skip"
+
+echo "--- all cursor tests passed ---"
