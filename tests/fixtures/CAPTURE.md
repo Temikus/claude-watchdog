@@ -85,10 +85,10 @@ Transcript fixtures (`tests/fixtures/*.jsonl`) are captured the same way, except
 the source is the transcript file itself - `transcript_path` in any Stop event
 points at it. Trim it to the interesting entries, then sanitise.
 
-## Known lossiness worth remembering
+## Non-text tool_result content
 
-A `tool_result` whose `content` is an array of non-text blocks (an image from
-`Read`, for instance) condenses to an **empty** body: `TOOL_RESULT[Read]: ` with
-nothing after it. `(no content)` appears only when `content` is neither a string
-nor an array (e.g. `null`). Both are pinned in `tests/fixtures.sh`. Either way
-the analyzer cannot tell an image came back at all.
+A `tool_result` whose `content` is an array renders each non-text block as a
+typed placeholder, so an image from `Read` condenses to
+`TOOL_RESULT[Read]: [image]` and a mixed result keeps its text alongside it.
+`(no content)` appears only when `content` is neither a string nor an array
+(e.g. `null`). Both are pinned in `tests/fixtures.sh`.

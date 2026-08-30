@@ -300,15 +300,13 @@ pass "fx-mcp-tools-session-preserves-full-tool-names"
 # --- image / non-text tool_result -------------------------------------------
 out="$TMPROOT/image.txt"
 extract_to tests/fixtures/image-result-session.jsonl "$out"
-# Pinning the CURRENT behaviour, which is not what design/rewrite-readiness.md
-# section 4 claims:
-#   - content: [{type:"image",...}]  -> an EMPTY body (the text filter yields "")
+#   - content: [{type:"image",...}]  -> "[image]", so the analyzer can see that
+#     something non-text came back rather than an empty body
 #   - content: null                  -> the literal "(no content)"
-# Both are lossy: the analyzer cannot tell that an image came back at all. See
-# the FLAG in tests/fixtures/CAPTURE.md.
-grep -qx 'TOOL_RESULT\[Read\]: ' "$out" || { grep -n 'TOOL_RESULT' "$out"; fail "fx-image-empty" "image-only tool_result no longer renders as an empty body"; }
+grep -qx 'TOOL_RESULT\[Read\]: \[image\]' "$out" || { grep -n 'TOOL_RESULT' "$out"; fail "fx-image-placeholder" "image-only tool_result should render as [image]"; }
 grep -qx 'TOOL_RESULT\[Read\]: (no content)' "$out" || fail "fx-null-no-content" "null tool_result no longer renders as (no content)"
-grep -qx 'TOOL_RESULT\[Bash\]: 1 failed' "$out" || fail "fx-mixed-blocks" "mixed text+image tool_result should keep the text and drop the image"
+grep -qx 'TOOL_RESULT\[Bash\]: 1 failed' "$out" || fail "fx-mixed-blocks" "mixed text+image tool_result should keep the text"
+grep -qx '\[image\]' "$out" || fail "fx-mixed-image" "the image block in a mixed result should still be marked"
 grep -q 'iVBORw0KGgo' "$out" && fail "fx-image-base64" "base64 image data leaked into the condensed transcript"
 pass "fx-image-result-session-pins-non-text-block-rendering"
 
