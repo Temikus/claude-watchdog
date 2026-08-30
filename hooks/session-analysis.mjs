@@ -8,6 +8,13 @@ import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
 import { extractTranscript, condense, counts } from './condense.mjs';
 
+// Everything this hook creates - the log, the sessions dirs, the delta, the
+// marker, the condensed transcript, the persisted analyses - carries session
+// content. Set the umask before the first mkdir rather than just before the
+// condensed write, so no path can land group- or world-readable on a caller
+// with the usual 022.
+process.umask(0o077);
+
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
 }
@@ -216,6 +223,7 @@ try {
   mkdirSync(GLOBAL_SESSIONS_DIR, { recursive: true });
   chmodSync(GLOBAL_SESSIONS_DIR, 0o700);
   mkdirSync(ANALYSES_DIR, { recursive: true });
+  chmodSync(ANALYSES_DIR, 0o700);
 
   cleanupSessionsDir(GLOBAL_SESSIONS_DIR);
   capAnalyses();
@@ -428,8 +436,6 @@ try {
     log('SKIP: delta has no top-level user messages, cursor unchanged');
     process.exit(0);
   }
-
-  process.umask(0o077);
 
   const RAW_FILE = join(SESSIONS_DIR, `raw-${sessionId}.txt`);
   const CONDENSED_FILE = join(SESSIONS_DIR, `condensed-${sessionId}.txt`);

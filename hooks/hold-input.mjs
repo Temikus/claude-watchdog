@@ -11,6 +11,10 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, unlinkSync, exi
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
+// The log and the pending sentinel both name the session; keep them owner-only
+// regardless of the caller's umask.
+process.umask(0o077);
+
 function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
 }
