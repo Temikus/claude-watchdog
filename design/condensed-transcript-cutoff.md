@@ -1,6 +1,6 @@
 # Design note: session-analyzer receives cut-off transcripts
 
-**Status:** Fix #1 implemented (final assistant message appended). #2–#5 outstanding.
+**Status:** Fix #1 implemented (final assistant message appended, deduped when the transcript flush beat the hook). #2–#5 outstanding.
 **Date:** 2026-07-07
 **Scope:** `hooks/session-analysis.mjs`, `hooks/cursor-slice.mjs`, `hooks/persist-analysis.mjs`, `agents/session-analyzer.md`
 **Relationship to other work:** Orthogonal to the trigger-timing hardening (PR #8 `stop_hook_active`, the `background_tasks` gap). Those govern *when* the Stop hook fires; this note is about *what content* the analyzer receives once it does.

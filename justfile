@@ -991,6 +991,22 @@ test-agent-prompt:
     else
       echo "PASS: no final-message header when the event carries none"
     fi
+
+    # Already flushed to the transcript -> appended copy would be a duplicate.
+    sid3="final-msg-dupe-$$"
+    ON_DISK='Renamed the stack components.'
+    payload3=$(jq -n --arg sid "$sid3" --arg tp "$FIXTURE" --arg cwd "$cwd" --arg msg "$ON_DISK" \
+      '{session_id:$sid, transcript_path:$tp, cwd:$cwd, stop_reason:"end_turn", last_assistant_message:$msg}')
+    f3=$(run_hook "$sid3" "$payload3")
+    if [ ! -f "$f3" ]; then
+      echo "FAIL: hook wrote no condensed file for the dedupe case" >&2; rc=1
+    elif grep -qF "$HEADER" "$f3"; then
+      echo "FAIL: final message re-appended although it is already in the transcript" >&2; rc=1
+    elif [ "$(grep -cF "$ON_DISK" "$f3")" != "1" ]; then
+      echo "FAIL: final message appears $(grep -cF "$ON_DISK" "$f3") times, expected 1" >&2; rc=1
+    else
+      echo "PASS: no duplicate when the final message already reached the transcript"
+    fi
     exit $rc
 
 # Run all tests
