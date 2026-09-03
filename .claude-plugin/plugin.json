@@ -80,6 +80,12 @@
       "title": "Hold input while analysis runs",
       "description": "Block newly submitted prompts while a session analysis is still in flight, so they don't interleave with the pending analysis. A held prompt is recoverable with up-arrow; resubmitting overrides the hold. The hold auto-expires after 240 seconds. Default is false",
       "default": false
+    },
+    "enforce_subagent_model": {
+      "type": "boolean",
+      "title": "Enforce pinned subagent models",
+      "description": "Block a Task/Agent dispatch that names an agent whose definition pins a 'model:' but does not pass an explicit 'model'. Re-dispatching with any explicit model passes. Default is false",
+      "default": false
     }
   }
 }

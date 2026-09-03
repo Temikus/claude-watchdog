@@ -54,6 +54,10 @@ test-hold:
 test-agent-prompt:
     bash tests/agent-prompt.sh
 
+# PreToolUse pinned-subagent-model hook
+test-enforce-model:
+    bash tests/enforce-model.sh
+
 # Perf budgets (not part of `just test`)
 test-perf:
     bash tests/perf.sh
@@ -100,7 +104,7 @@ test-lifecycle:
 # --- end rewrite/coverage-config --------------------------------------------
 
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-gates test-fixtures test-golden test-config test-lifecycle
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-enforce-model test-gates test-fixtures test-golden test-config test-lifecycle
 
 # Lint + all tests
 check: lint test

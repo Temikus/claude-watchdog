@@ -21,13 +21,14 @@ Conventions used below:
 
 ## 1. Entry points
 
-Three hooks, wired in `hooks/hooks.json`:
+Four hooks, wired in `hooks/hooks.json`:
 
 | Event | Matcher | Command | Timeout |
 | --- | --- | --- | --- |
 | `Stop` | `""` (all) | `node ${CLAUDE_PLUGIN_ROOT}/hooks/session-analysis.mjs` | 120 s |
 | `UserPromptSubmit` | `""` (all) | `node ${CLAUDE_PLUGIN_ROOT}/hooks/hold-input.mjs` | 10 s |
 | `SubagentStop` | `session-analyzer` | `node ${CLAUDE_PLUGIN_ROOT}/hooks/persist-analysis.mjs` | 10 s |
+| `PreToolUse` | `Task\|Agent` | `node ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-subagent-model.mjs` | 10 s |
 
 Two further files are libraries with a debug CLI attached, not hooks:
 `hooks/condense.mjs` and `hooks/cursor-slice.mjs` (section 9).
@@ -42,6 +43,7 @@ as UTF-8 and `JSON.parse`s it.
 | Stop | 65536 bytes | Truncated buffer almost certainly fails `JSON.parse`, which is caught, logged as `ERROR:`, and exits 0. **[UNTESTED]** |
 | UserPromptSubmit | 65536 bytes | Same, logged with the `[hold]` prefix. Garbage stdin is tested; the cap itself is not. |
 | SubagentStop | 131072 bytes | Same, logged with the `[persist]` prefix. **[UNTESTED]** |
+| PreToolUse | 65536 bytes | Same, logged with the `[model]` prefix. Garbage stdin is tested; the cap itself is not. |
 
 The cap slices *bytes* before decoding, so a multi-byte character straddling the
 cap decodes to U+FFFD. This only ever makes the parse fail sooner, and the parse
@@ -79,6 +81,11 @@ never read and never logged, by design.
 SubagentStop event (`persist-analysis.mjs`): `agent_type` (gate, must equal
 `session-analyzer`), `session_id` (gate, same regex), and
 `last_assistant_message` (the content written to disk).
+
+PreToolUse event (`enforce-subagent-model.mjs`): `tool_name` (gate, must be
+`Task` or `Agent`), `tool_input.subagent_type` (gate, and spliced into the agent
+file path), and `tool_input.model` (gate; any non-empty value allows). No other
+field is read, and the prompt carried in `tool_input` is never logged.
 
 See `design/formats.md` for what these fields look like on the wire and which
 Claude Code version introduced them.
@@ -200,6 +207,39 @@ The README also describes the marker as "session has not already been analysed",
 which reads as once-per-session; it is a concurrency lock with a two-hour stale
 sweep, and a session can be analysed many times.
 
+### 2.3 PreToolUse gate order
+
+`enforce-subagent-model.mjs` is a port of a personal bash hook
+(`~/.claude/hooks/enforce-subagent-model.sh`); the behaviour below is the
+behaviour that hook had. Every gate allows the dispatch; only the final step
+blocks.
+
+| # | Gate | Condition to allow |
+| --- | --- | --- |
+| 1 | Opt-in | `ENFORCE_SUBAGENT_MODEL` is not `1`/`true`. Checked before stdin is read, so the hook is a bare process spawn when off |
+| 2 | Tool name | `tool_name` is neither `Task` nor `Agent` |
+| 3 | Dispatch shape | `tool_input.subagent_type` is empty, **or** `tool_input.model` is non-empty |
+| 4 | Path safety | `subagent_type` contains `/` or starts with `.` |
+| 5 | Agent lookup | no readable file at `<dir>/<t>.md` or `<dir>/<t>/<t>.md`, for `dir` in `${CLAUDE_PROJECT_DIR:-.}/.claude/agents` then `~/.claude/agents`, first hit wins |
+| 6 | Pin | the file's frontmatter has no `model:` key, or its value lower-cases to `inherit` |
+
+Past gate 6 the hook logs one `BLOCK:` line, writes the `BLOCKED:` message to
+stderr, and exits 2.
+
+The pin is read as the first line matching `^model:[ \t]+(\S+)` inside the
+leading `---`/`---` block, with `"` and `'` stripped from the value and a
+trailing `\r` tolerated. A `model:` line after the closing `---` is body text
+and is not a pin. Only the first `---` block counts, and only when it is line 1.
+
+The lookup is a plain path splice, so gate 4 is load-bearing: `subagent_type` is
+unsanitised tool input. Rejecting rather than sanitising means a legitimate agent
+whose name contains `/` is never enforced, which is the fail-open side.
+
+**[OPEN QUESTION FOR THE PORT]** The hook does not read plugin-provided agents
+(`<plugin>/agents/*.md`), only project and personal ones, so a pinned agent that
+ships inside a plugin is never enforced. Decide whether the port widens the
+search.
+
 ---
 
 ## 3. Configuration
@@ -238,6 +278,7 @@ Every other `cfg()` call site is **[UNTESTED]** for precedence.
 | Interactive recommendations | `CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS` | `CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS` | `0` | bool |
 | Skip with background tasks | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS` | `1` | bool |
 | Hold input | `CLAUDE_WATCHDOG_HOLD_INPUT` | `CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS` | `0` | bool |
+| Enforce subagent model | `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `CLAUDE_PLUGIN_OPTION_ENFORCE_SUBAGENT_MODEL` | `0` | bool |
 | Include rules | `CLAUDE_WATCHDOG_INCLUDE_RULES` | `CLAUDE_PLUGIN_OPTION_INCLUDE_RULES` | `1` | bool |
 | Verbose | `CLAUDE_WATCHDOG_VERBOSE` | `CLAUDE_PLUGIN_OPTION_VERBOSE` | `0` | bool |
 | Legacy exit-2 mode | `CLAUDE_WATCHDOG_LEGACY_HOOK` | `CLAUDE_PLUGIN_OPTION_legacy_hook` | `false` | see below |
@@ -616,9 +657,12 @@ most 20 analysis files survive, newest by mtime. **[UNTESTED]** in the Stop hook
 | UserPromptSubmit | allow, any reason | nothing | 0 |
 | UserPromptSubmit | block | `{"decision":"block","reason":"<hold message>"}`, no trailing newline | 0 |
 | SubagentStop | any | nothing | 0 |
+| PreToolUse | allow, any reason | nothing | 0 |
+| PreToolUse | block | nothing on stdout; the `BLOCKED:` message plus `\n` on **stderr** | **2** |
 
-Exit code 2 in legacy mode is the only non-zero exit any hook produces. Every
-error path in all three hooks is fail-open: the exception is caught, an `ERROR:`
+Legacy mode and a PreToolUse block are the only non-zero exits any hook
+produces; for PreToolUse, exit 2 *is* the block protocol, not an error. Every
+error path in all four hooks is fail-open: the exception is caught, an `ERROR:`
 line is logged, and the process exits 0. Legacy mode is **[UNTESTED]**.
 
 The debug CLIs do use other codes; see section 9.
@@ -647,6 +691,10 @@ The complete set, per hook.
 **Hold hook**, tagged `[hold]`: `RELEASE: hold expired for session=<sid> (<n>s >
 <m>s)`, `RELEASE: user override for session=<sid>`, `HOLD: blocked prompt for
 session=<sid> (age=<n>s)`, `ERROR: unexpected failure: <message>`.
+
+**Enforce hook**, tagged `[model]`: `BLOCK: '<subagent_type>' pinned to <model>,
+dispatch had no explicit model`, `ERROR: unexpected failure: <message>`. Nothing
+is logged on an allow, since the hook runs on every dispatch.
 
 **Persist hook**, tagged `[persist]`: `WROTE: <path> (<n> bytes)`, `SKIP: invalid
 session_id`, `SKIP: empty last_assistant_message for session=<sid>`,
