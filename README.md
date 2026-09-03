@@ -62,6 +62,7 @@ Run a short session and end Claude's turn. You should see output like:
 | Condenser | `hooks/condense.mjs` | Turns the raw JSONL into the condensed transcript, within a byte budget |
 | SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk (no UI noise) |
 | UserPromptSubmit hook | `hooks/hold-input.mjs` | Optionally holds new prompts while an analysis is in flight |
+| PreToolUse hook | `hooks/enforce-subagent-model.mjs` | Optionally blocks a `Task`/`Agent` dispatch that ignores an agent's pinned model |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
 | Slash command | `skills/analyze-session/SKILL.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
@@ -110,6 +111,7 @@ with `/plugin configure claude-watchdog`:
 | Skip while background tasks run | `true` | Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a finished session, not a paused one. Requires Claude Code ≥ 2.1.145; a no-op on older versions |
 | Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/*.md` (project first, then `~/.claude`) so it can check the session against your own instructions. Files over 8 KB are skipped; the list is capped at 16 KB total |
 | Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
+| Enforce pinned subagent models | `false` | Block a `Task`/`Agent` dispatch that names an agent whose definition pins a `model:` but passes no explicit `model` |
 
 ### Environment variable overrides
 
@@ -125,6 +127,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Override cooldown between analyses |
 | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `1` | Set to `0` to analyze even while background tasks (subagents, shell jobs, workflows) are still in flight. **This flag also gates the session-cron dedup guard** (see below), so setting it to `0` re-enables analysis in both cases |
 | `CLAUDE_WATCHDOG_HOLD_INPUT` | `0` | Set to `1` to hold newly submitted prompts while an analysis is in flight (see below) |
+| `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `0` | Set to `1` to block a `Task`/`Agent` dispatch that ignores an agent's pinned model (see below) |
 
 ### Advanced overrides
 
@@ -162,6 +165,31 @@ Two caveats: a prompt that lands in the instant between the analyzer finishing a
 Claude presenting the analysis is not held (the analysis is already persisted to
 the analyses directory at that point), and the hook adds one Node cold-start
 (~30–80 ms) to every prompt submission while the plugin is installed.
+
+### Enforcing pinned subagent models
+
+An agent definition can pin a model in its frontmatter:
+
+```markdown
+---
+name: cheap-reviewer
+model: haiku
+---
+```
+
+Claude Code honours that pin only when the dispatch leaves `model` unset - passing
+`model` explicitly overrides it, which is easy to do by accident and silently moves
+the work onto a different (usually pricier) model.
+
+With **Enforce pinned subagent models** enabled, a `PreToolUse` hook blocks any
+`Task`/`Agent` dispatch that names a pinned agent without an explicit `model`, and
+tells Claude which model to re-dispatch with. A deliberate override still passes -
+the point is that it has to be deliberate, not implicit.
+
+The agent definition is looked up as `<agent>.md` or `<agent>/<agent>.md`, first
+under `$CLAUDE_PROJECT_DIR/.claude/agents`, then `~/.claude/agents`. An agent with
+no `model:` key, or `model: inherit`, is never enforced. Every other path allows the
+dispatch, so a malformed definition or an unreadable directory cannot wedge Claude.
 
 You can also create a `.claude-watchdog-skip` file to disable the hook for a project. The hook looks for it in the session's working directory, so put it at the directory you start Claude Code from:
 

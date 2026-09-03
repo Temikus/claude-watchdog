@@ -27,6 +27,7 @@ done < <(env)
 : "${HOOK_STOP:=node hooks/session-analysis.mjs}"
 : "${HOOK_HOLD:=node hooks/hold-input.mjs}"
 : "${HOOK_PERSIST:=node hooks/persist-analysis.mjs}"
+: "${HOOK_ENFORCE:=node hooks/enforce-subagent-model.mjs}"
 # Debug CLI: `<binary> condense <jsonl> [bytes]` / `<binary> extract <jsonl>`.
 # See tests/CONDENSE-CLI.md - this is a supported interface, not an internal.
 : "${HOOK_CONDENSE:=node hooks/condense.mjs}"
@@ -35,6 +36,7 @@ read -r -a HOOK_STOP_CMD <<< "$HOOK_STOP"
 read -r -a HOOK_HOLD_CMD <<< "$HOOK_HOLD"
 read -r -a HOOK_PERSIST_CMD <<< "$HOOK_PERSIST"
 read -r -a HOOK_CONDENSE_CMD <<< "$HOOK_CONDENSE"
+read -r -a HOOK_ENFORCE_CMD <<< "$HOOK_ENFORCE"
 
 FIXTURE="${FIXTURE:-tests/fixtures/midturn-session.jsonl}"
 
@@ -71,6 +73,20 @@ run_persist() {
 }
 
 run_condense() { "${HOOK_CONDENSE_CMD[@]}" "$@"; }
+
+# The PreToolUse block protocol is stderr + exit 2, so ENFORCE_ERR carries the
+# assertion and ENFORCE_OUT exists only to prove stdout stays empty.
+ENFORCE_OUT=""; ENFORCE_ERR=""; ENFORCE_RC=0
+run_enforce() {
+  local payload="$1"; shift
+  local errfile; errfile=$(mktemp)
+  ENFORCE_RC=0
+  # shellcheck disable=SC2034  # read by the sourcing test scripts
+  ENFORCE_OUT=$(printf '%s' "$payload" | env ${1+"$@"} "${HOOK_ENFORCE_CMD[@]}" 2>"$errfile") || ENFORCE_RC=$?
+  # shellcheck disable=SC2034  # read by the sourcing test scripts
+  ENFORCE_ERR=$(cat "$errfile")
+  rm -f "$errfile"
+}
 
 # Classify a Stop-hook result by its wire protocol: "analyze this session" is a
 # JSON `decision:block` on stdout with exit 0 (BLOCK); any other clean exit is a
