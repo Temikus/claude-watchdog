@@ -69,4 +69,43 @@ elif [ "$(grep -cF "$ON_DISK" "$f3")" != "1" ]; then
 else
   echo "PASS: no duplicate when the final message already reached the transcript"
 fi
+
+# --- Issue #34: Bash grant must not use an unsupported permission-rule pattern ---
+skill="skills/analyze-session/SKILL.md"
+check_no_bash_pattern() { # check_no_bash_pattern <file> <field>
+  local file="$1" field="$2"
+  local line; line=$(grep -m1 "^${field}:" "$file")
+  if echo "$line" | grep -q 'Bash('; then
+    echo "FAIL: $file $field grants Bash with a permission-rule pattern, which frontmatter does not honour: $line" >&2; rc=1
+  elif ! echo "$line" | grep -qE '(^|, )Bash(,|$)'; then
+    echo "FAIL: $file $field does not grant plain Bash: $line" >&2; rc=1
+  else
+    echo "PASS: $file $field grants plain Bash, no pattern"
+  fi
+}
+check_no_bash_pattern "$prompt" "tools"
+check_no_bash_pattern "$skill" "allowed-tools"
+
+check_rule_present() { # check_rule_present <file> <needle> <description>
+  if grep -qF "$2" "$1"; then echo "PASS: $1 has $3"; else echo "FAIL: $1 missing $3" >&2; rc=1; fi
+}
+for f in "$prompt" "$skill"; do
+  check_rule_present "$f" "git show" "an explicit git show mention"
+  check_rule_present "$f" 'MUST begin with `### Goals`' "the no-preamble rule"
+  check_rule_present "$f" "delete the heading instead" "the conditional-section negative example"
+  check_rule_present "$f" "Never use an em dash" "the em/en dash punctuation rule"
+  check_rule_present "$f" 'Every heading is `###`' "the heading-level rule"
+done
+
+# --- Twin parity: the ## Output section must have the same headings, in the
+# same order, in both files. Prose differs deliberately (transcript vs. live
+# conversation wording); structure must not.
+extract_headings() { sed -n '/^## Output$/,/^Rules:$/p' "$1" | grep -oE '^(###[^(]*|- [A-Za-z]+:)'; }
+if diff -q <(extract_headings "$prompt") <(extract_headings "$skill") > /dev/null; then
+  echo "PASS: agent and skill Output section structure is in step"
+else
+  diff <(extract_headings "$prompt") <(extract_headings "$skill") >&2
+  echo "FAIL: agent and skill Output section structure has drifted" >&2; rc=1
+fi
+
 exit $rc
