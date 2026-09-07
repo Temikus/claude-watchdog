@@ -91,10 +91,10 @@ check_rule_present() { # check_rule_present <file> <needle> <description>
 }
 for f in "$prompt" "$skill"; do
   check_rule_present "$f" "git show" "an explicit git show mention"
-  check_rule_present "$f" 'MUST begin with `### Goals`' "the no-preamble rule"
+  check_rule_present "$f" "MUST begin with \`### Goals\`" "the no-preamble rule"
   check_rule_present "$f" "delete the heading instead" "the conditional-section negative example"
   check_rule_present "$f" "Never use an em dash" "the em/en dash punctuation rule"
-  check_rule_present "$f" 'Every heading is `###`' "the heading-level rule"
+  check_rule_present "$f" "Every heading is \`###\`" "the heading-level rule"
 done
 
 # --- Twin parity: the ## Output section must have the same headings, in the
