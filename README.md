@@ -60,7 +60,7 @@ Run a short session and end Claude's turn. You should see output like:
 | --- | --- | --- |
 | Stop hook | `hooks/session-analysis.mjs` | Preprocesses the transcript, triggers the analyzer |
 | Condenser | `hooks/condense.mjs` | Turns the raw JSONL into the condensed transcript, within a byte budget |
-| SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk (no UI noise) |
+| SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk and echoes the save path |
 | UserPromptSubmit hook | `hooks/hold-input.mjs` | Optionally holds new prompts while an analysis is in flight |
 | PreToolUse hook | `hooks/enforce-subagent-model.mjs` | Optionally blocks a `Task`/`Agent` dispatch that ignores an agent's pinned model |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
@@ -208,7 +208,7 @@ Don't want to wait for Claude to stop? Run `/analyze-session` any time during a 
 3. `condense.mjs` filters the JSONL transcript down to user text, assistant text, tool calls, and tool results, keeps the last ~50 KB, and writes it to `${CLAUDE_PLUGIN_DATA}/sessions/condensed-<session-id>.txt` (owner-only permissions; falls back to `~/.claude/tmp/claude-watchdog/sessions/` when not running as an installed plugin). When **Store transcripts in project directory** is enabled, files are written to `<project>/.claude/tmp/claude-watchdog/sessions/` instead — this keeps them inside the project directory so Claude Code's `auto` mode doesn't prompt for Read permission. The project directory is the nearest ancestor of the session's cwd holding `.git` or `.claude`, so a turn that ends with the shell inside a subdirectory still writes to one place per project. Files older than 2 hours are cleaned up automatically in both locations.
 4. It writes `{"decision": "block", "reason": ...}` to stdout and exits `0`. The reason instructs Claude to spawn the `session-analyzer` subagent pointed at that file. Setting `CLAUDE_WATCHDOG_LEGACY_HOOK=true` opts back into the old behaviour - the same instruction on stderr with exit code `2` - for hosts that do not honour the JSON decision.
 5. The subagent reads the condensed transcript, runs `git diff` / `git log` in the working directory, and produces the structured review — all inside your current Claude Code session, using the model you're already authenticated with.
-6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.mjs` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write`, keeping the UI clean.
+6. When the subagent finishes, Claude Code fires the `SubagentStop` hook. `persist-analysis.mjs` reads the subagent's final message from the event payload and writes it to `~/.claude/logs/claude-watchdog-analyses/` — so the subagent itself doesn't have to call `Write` — then prints `Analysis saved to: <path>` on stdout so the save location shows up in the transcript.
 
 ### What the condensed transcript looks like
 
