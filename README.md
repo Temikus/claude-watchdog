@@ -191,6 +191,12 @@ under `$CLAUDE_PROJECT_DIR/.claude/agents`, then `~/.claude/agents`. An agent wi
 no `model:` key, or `model: inherit`, is never enforced. Every other path allows the
 dispatch, so a malformed definition or an unreadable directory cannot wedge Claude.
 
+Claude Code >= 2.1.178 also accepts `Agent(model:opus)` as a native permission rule.
+That denies (or allows) a specific model *value* and complements this hook, which
+blocks a *missing* model - the native syntax cannot express "parameter absent". The
+hook is a no-op when `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set, since that overrides
+every per-spawn and definition model anyway.
+
 You can also create a `.claude-watchdog-skip` file to disable the hook for a project. The hook looks for it in the session's working directory, so put it at the directory you start Claude Code from:
 
 ```bash

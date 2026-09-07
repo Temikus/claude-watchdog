@@ -129,7 +129,11 @@ enforce "$(mk_payload Agent crlf)" CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL=1
 case "$ENFORCE_ERR" in *"model: sonnet)"*) ;; *) fail "crlf" "got '$ENFORCE_ERR'" ;; esac
 pass "crlf-frontmatter-parses"
 
-# --- Test 13: fail-open on garbage stdin ---
+# --- Test 13: CLAUDE_CODE_SUBAGENT_MODEL_FORCE overrides every model -> allow ---
+enforce "$(mk_payload Agent pinned)" CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL=1 CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
+allow "model-force-allows"
+
+# --- Test 14: fail-open on garbage stdin ---
 enforce "not json" CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL=1
 [ "$ENFORCE_RC" -eq 0 ] || fail "fail-open" "expected exit 0, got $ENFORCE_RC"
 pass "fail-open"
