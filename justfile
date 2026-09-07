@@ -211,3 +211,17 @@ test-gates:
     bash tests/gates.sh
 
 # --- end rewrite/coverage-gates ---------------------------------------------
+
+# Refresh the local, gitignored reference/claude-code mirror to the latest upstream release tag
+refresh-reference:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp=$(mktemp -d)
+    git clone --quiet https://github.com/anthropics/claude-code "$tmp/claude-code"
+    tag=$(git -C "$tmp/claude-code" describe --tags --abbrev=0)
+    git -C "$tmp/claude-code" checkout --quiet "$tag"
+    rm -rf reference/claude-code
+    mkdir -p reference/claude-code
+    rsync -a --exclude='.git' --exclude='demo.gif' "$tmp/claude-code"/ reference/claude-code/
+    rm -rf "$tmp"
+    echo "Refreshed reference/claude-code to ${tag}. Update the version/date in design/reference-snapshot.md."
