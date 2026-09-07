@@ -18,6 +18,10 @@ function cfg(watchdogVar, pluginVar, defaultVal) {
 
 const LOG_FILE = process.env.CLAUDE_WATCHDOG_LOG ?? join(homedir(), '.claude/logs/claude-watchdog.log');
 const ENFORCE = cfg('CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL', 'CLAUDE_PLUGIN_OPTION_ENFORCE_SUBAGENT_MODEL', '0');
+// CLAUDE_CODE_SUBAGENT_MODEL_FORCE (Claude Code 2.1.257+) overrides both the
+// per-spawn and the definition model, so a missing `model` changes nothing.
+const FORCE = process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE ?? '';
+const FORCED = FORCE !== '' && FORCE !== '0' && FORCE.toLowerCase() !== 'false';
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -54,6 +58,7 @@ function readAgentFile(subagentType) {
 
 try {
   if (ENFORCE !== '1' && ENFORCE !== 'true') process.exit(0);
+  if (FORCED) process.exit(0);
 
   mkdirSync(dirname(LOG_FILE), { recursive: true });
 
