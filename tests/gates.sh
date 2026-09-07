@@ -416,8 +416,8 @@ printf 'global rules\n' > "$GHOME/.claude/CLAUDE.md"
 printf 'global extra rules\n' > "$GHOME/.claude/rules/aaa-global.md"
 gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-order" BLOCK
-assert_out "rules-order" "User instruction files: "
-rules_line=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o 'User instruction files: .*' | head -1)
+assert_out "rules-order" "User instruction files (read only when a compliance question actually arises): "
+rules_line=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o 'User instruction files.*' | head -1)
 [ -n "$rules_line" ] || fail "rules-order" "no rules line in prompt"
 # Project files must all precede global ones, even though the global rule sorts
 # first by filename.
@@ -428,14 +428,20 @@ glob_first=$(awk -v s="$rules_line" -v g="$GHOME" 'BEGIN{n=split(s,a,", "); for(
 [ "$proj_last" -lt "$glob_first" ] || fail "rules-order" "project files not before global: $rules_line"
 pass "rules-project-files-before-global"
 
-# Over 8 KB: skipped and the reason logged.
+# Over 8 KB: the head is copied into the sessions dir and that copy is passed,
+# so a large project CLAUDE.md is still checked instead of silently dropped.
 sid=$(new_sid)
 head -c 9000 /dev/zero | tr '\0' 'x' > "$rulesproj/.claude/rules/big.md"
 gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-8kb" BLOCK
-assert_log "rules-8kb" "RULES: skipped $rulesproj/.claude/rules/big.md (9000B, over 8KB)"
-refute_out "rules-8kb" "big.md"
-pass "rules-over-8kb-skipped-and-logged"
+assert_log "rules-8kb" "RULES: truncated $rulesproj/.claude/rules/big.md (9000B -> 8192B head)"
+refute_out "rules-8kb" "$rulesproj/.claude/rules/big.md"
+big_copy=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o "$GSESSIONS/rules-[^,\"]*big.md" | head -1)
+[ -n "$big_copy" ] || fail "rules-8kb" "no truncated copy in the prompt"
+[ -f "$big_copy" ] || fail "rules-8kb" "truncated copy $big_copy was not written"
+grep -q "$rulesproj/.claude/rules/big.md" "$big_copy" \
+  || fail "rules-8kb" "truncated copy does not name the file it came from"
+pass "rules-over-8kb-passed-as-a-truncated-head"
 rm -f "$rulesproj/.claude/rules/big.md"
 
 # 16 KB total cap: two 7000B project files fit (14000B); the next 7000B file
@@ -451,6 +457,20 @@ assert_outcome "rules-cap" BLOCK
 assert_log "rules-cap" "RULES: skipped $GHOME/.claude/CLAUDE.md (7000B, total cap)"
 assert_out "rules-cap" "aaa-global.md"
 pass "rules-16kb-total-cap"
+
+# An oversized file contributes its head, not its own size, to the total - so one
+# huge CLAUDE.md no longer starves every rule that follows it.
+sid=$(new_sid)
+head -c 40000 /dev/zero | tr '\0' 'a' > "$rulesproj/CLAUDE.md"
+printf 'small project rule\n' > "$rulesproj/.claude/rules/zzz-project.md"
+printf 'small global rule\n' > "$GHOME/.claude/CLAUDE.md"
+printf 'small global rule\n' > "$GHOME/.claude/rules/aaa-global.md"
+gate_run "$sid" "$sr_transcript" "$rulesproj" ""
+assert_outcome "rules-head-cap" BLOCK
+assert_log "rules-head-cap" "RULES: truncated $rulesproj/CLAUDE.md (40000B -> 8192B head)"
+assert_out "rules-head-cap" "zzz-project.md"
+assert_out "rules-head-cap" "aaa-global.md"
+pass "rules-oversize-head-counts-toward-the-total-cap"
 
 # Opt-out sends nothing at all.
 sid=$(new_sid)

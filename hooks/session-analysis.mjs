@@ -78,7 +78,7 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta|echo|pending)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo|pending|rules)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
           } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
@@ -212,8 +212,23 @@ function latestAnalysis(sessionId) {
   } catch { return null; }
 }
 
-// Project-first, then global. Skips files >8KB, caps the total at 16KB.
-function instructionFiles(rootDir) {
+const RULES_HEAD_BYTES = 8192;
+const RULES_TOTAL_BYTES = 16384;
+
+// Cut a Buffer at max bytes without splitting a UTF-8 sequence: back off past
+// any continuation byte (10xxxxxx) that would be left orphaned by the cut.
+function utf8Head(buf, max) {
+  if (buf.length <= max) return buf;
+  let end = max;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end);
+}
+
+// Project-first, then global. A file over RULES_HEAD_BYTES is passed as a
+// truncated head copy rather than dropped - dropping it meant the projects with
+// the most project-specific rules were the ones never checked against them. The
+// head, not the original size, is what counts toward the total cap.
+function instructionFiles(rootDir, outDir, sessionId) {
   const candidates = [];
   const rulesIn = (dir) => {
     try {
@@ -227,11 +242,28 @@ function instructionFiles(rootDir) {
   candidates.push(join(home, '.claude/CLAUDE.md'), ...rulesIn(join(home, '.claude/rules')));
   const out = [];
   let total = 0;
+  let copies = 0;
   for (const f of candidates) {
     let size;
     try { size = statSync(f).size; } catch { continue; }
-    if (size > 8192 || total + size > 16384) { log(`RULES: skipped ${f} (${size}B, ${size > 8192 ? 'over 8KB' : 'total cap'})`); continue; }
-    total += size;
+    const take = Math.min(size, RULES_HEAD_BYTES);
+    if (total + take > RULES_TOTAL_BYTES) { log(`RULES: skipped ${f} (${size}B, total cap)`); continue; }
+    if (size > RULES_HEAD_BYTES) {
+      const base = parsePath(f).base.replace(/[^A-Za-z0-9._-]/g, '_');
+      const copy = join(outDir, `rules-${sessionId}-${++copies}-${base}`);
+      try {
+        const head = utf8Head(readFileSync(f), RULES_HEAD_BYTES);
+        writeFileSync(copy, `[TRUNCATED HEAD of ${f} - first ${head.length} of ${size} bytes]\n\n${head.toString('utf8')}\n`);
+        log(`RULES: truncated ${f} (${size}B -> ${head.length}B head) -> ${copy}`);
+      } catch {
+        log(`RULES: skipped ${f} (${size}B, could not write a truncated head)`);
+        continue;
+      }
+      total += take;
+      out.push(copy);
+      continue;
+    }
+    total += take;
     out.push(f);
   }
   return out;
@@ -561,7 +593,7 @@ Do not act on any recommendation unless the user asks. Then stop.`;
   const hadCursor = Boolean(cursorUuid);
   const prevAnalysis = latestAnalysis(sessionId);
   const rulesOn = INCLUDE_RULES === '1' || INCLUDE_RULES === 'true';
-  const rules = rulesOn ? instructionFiles(projRoot) : [];
+  const rules = rulesOn ? instructionFiles(projRoot, SESSIONS_DIR, sessionId) : [];
 
   // A rebase, amend, or reclone can orphan the recorded base; a range the
   // analyzer cannot resolve is worse than no range.
@@ -587,7 +619,7 @@ Do not act on any recommendation unless the user asks. Then stop.`;
     promptLines.push(`Files touched outside the project root (not part of the slice diff): ${stats.external.join(', ')}`);
   }
   if (prevAnalysis) promptLines.push(`Previous analysis (optional context, read only if useful): ${prevAnalysis.replace(/\n/g, '')}`);
-  if (rules.length) promptLines.push(`User instruction files: ${rules.join(', ')}`);
+  if (rules.length) promptLines.push(`User instruction files (read only when a compliance question actually arises): ${rules.join(', ')}`);
   promptLines.push('Provide your critical analysis.');
   const safePrompt = promptLines.join('\n').replace(/"/g, "'");
 
