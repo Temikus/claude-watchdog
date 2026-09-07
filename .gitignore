@@ -4,3 +4,6 @@
 .claude/
 reference
 tests/fixtures/large-session.jsonl
+# iCloud sync duplicates
+* 2.*
+* 2
