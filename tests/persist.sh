@@ -70,7 +70,7 @@ pass "pending-cleared-empty-message"
 sid7="persist-t7-$$"
 run_persist "$(jq -n --arg sid "$sid7" --arg msg $'### Goals\nScoped analysis.' \
   '{session_id:$sid, agent_type:"claude-watchdog:session-analyzer", last_assistant_message:$msg}')"
-out=$(ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid7}-*.md 2>/dev/null | head -1)
+out=$(find "$CLAUDE_WATCHDOG_ANALYSES_DIR" -maxdepth 1 -name "${sid7}-*.md" -print -quit 2>/dev/null)
 [ -n "$out" ] || fail "scoped-agent-type" "no analysis file written for scoped agent_type"
 pass "scoped-agent-type"
 
