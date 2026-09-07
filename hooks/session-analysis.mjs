@@ -3,10 +3,11 @@ import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
   statSync, unlinkSync, rmdirSync, existsSync, chmodSync
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
-import { extractTranscript, condense, counts, clip } from './condense.mjs';
+import { extractTranscript, condense, counts } from './condense.mjs';
 import { dumpEvent } from './dump-events.mjs';
 
 // Everything this hook creates - the log, the sessions dirs, the delta, the
@@ -77,7 +78,7 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta|echo|pending)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo|pending|rules)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
           } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
@@ -104,15 +105,25 @@ function capAnalyses() {
   } catch { /* dir may not exist or be empty */ }
 }
 
-function truncateStrings(val, max) {
-  if (typeof val === 'string') return val.length > max ? clip(val, max) + '...[truncated]' : val;
-  if (Array.isArray(val)) return val.map(v => truncateStrings(v, max));
-  if (val && typeof val === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(val)) out[k] = truncateStrings(v, max);
-    return out;
-  }
-  return val;
+// git is optional here: a non-repo cwd, a missing binary, a repo with no commits
+// and a broken .git all mean "no slice boundary", never a failed hook.
+function git(dir, args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: dir, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch { return null; }
+}
+
+const SHA_RE = /^[0-9a-f]{7,64}$/;
+
+function gitHead(dir) {
+  const sha = git(dir, ['rev-parse', 'HEAD']);
+  return sha && SHA_RE.test(sha) ? sha : null;
+}
+
+function gitHasCommit(dir, sha) {
+  return git(dir, ['cat-file', '-e', `${sha}^{commit}`]) !== null;
 }
 
 // Anchor project-local storage to the project root, not the shell's cwd at stop
@@ -161,17 +172,20 @@ function isUserMessage(obj) {
   return c.some(b => b.type === 'text') && !c.some(b => b.type === 'tool_result');
 }
 
-function deltaStats(entries, baseDir) {
+function deltaStats(entries, rootDir) {
   let toolUses = 0, userMessages = 0, edits = 0, mutatingBash = 0;
   const files = new Set();
+  const external = new Set();
+  // A path outside the project root (a plan under ~/.claude, a scratchpad file)
+  // can never show up in the slice diff, so it is kept apart from the list the
+  // analyzer is told to diff rather than dropped or silently mixed in.
   const addFile = (f) => {
     if (typeof f !== 'string' || !f) return;
-    let p = f;
-    if (baseDir && f.startsWith('/')) {
-      const rel = relative(baseDir, f);
-      if (rel && !rel.startsWith('..')) p = rel;
-    }
-    files.add(p.replace(/\n/g, ''));
+    const p = f.replace(/\n/g, '');
+    if (!rootDir || !p.startsWith('/')) { files.add(p); return; }
+    const rel = relative(rootDir, p);
+    if (rel && !rel.startsWith('..')) files.add(rel);
+    else external.add(p);
   };
   for (const obj of entries) {
     if (isUserMessage(obj)) userMessages++;
@@ -188,7 +202,7 @@ function deltaStats(entries, baseDir) {
       }
     }
   }
-  return { toolUses, userMessages, edits, mutatingBash, files: [...files] };
+  return { toolUses, userMessages, edits, mutatingBash, files: [...files], external: [...external] };
 }
 
 function latestAnalysis(sessionId) {
@@ -198,8 +212,23 @@ function latestAnalysis(sessionId) {
   } catch { return null; }
 }
 
-// Project-first, then global. Skips files >8KB, caps the total at 16KB.
-function instructionFiles(rootDir) {
+const RULES_HEAD_BYTES = 8192;
+const RULES_TOTAL_BYTES = 16384;
+
+// Cut a Buffer at max bytes without splitting a UTF-8 sequence: back off past
+// any continuation byte (10xxxxxx) that would be left orphaned by the cut.
+function utf8Head(buf, max) {
+  if (buf.length <= max) return buf;
+  let end = max;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end);
+}
+
+// Project-first, then global. A file over RULES_HEAD_BYTES is passed as a
+// truncated head copy rather than dropped - dropping it meant the projects with
+// the most project-specific rules were the ones never checked against them. The
+// head, not the original size, is what counts toward the total cap.
+function instructionFiles(rootDir, outDir, sessionId) {
   const candidates = [];
   const rulesIn = (dir) => {
     try {
@@ -213,11 +242,28 @@ function instructionFiles(rootDir) {
   candidates.push(join(home, '.claude/CLAUDE.md'), ...rulesIn(join(home, '.claude/rules')));
   const out = [];
   let total = 0;
+  let copies = 0;
   for (const f of candidates) {
     let size;
     try { size = statSync(f).size; } catch { continue; }
-    if (size > 8192 || total + size > 16384) { log(`RULES: skipped ${f} (${size}B, ${size > 8192 ? 'over 8KB' : 'total cap'})`); continue; }
-    total += size;
+    const take = Math.min(size, RULES_HEAD_BYTES);
+    if (total + take > RULES_TOTAL_BYTES) { log(`RULES: skipped ${f} (${size}B, total cap)`); continue; }
+    if (size > RULES_HEAD_BYTES) {
+      const base = parsePath(f).base.replace(/[^A-Za-z0-9._-]/g, '_');
+      const copy = join(outDir, `rules-${sessionId}-${++copies}-${base}`);
+      try {
+        const head = utf8Head(readFileSync(f), RULES_HEAD_BYTES);
+        writeFileSync(copy, `[TRUNCATED HEAD of ${f} - first ${head.length} of ${size} bytes]\n\n${head.toString('utf8')}\n`);
+        log(`RULES: truncated ${f} (${size}B -> ${head.length}B head) -> ${copy}`);
+      } catch {
+        log(`RULES: skipped ${f} (${size}B, could not write a truncated head)`);
+        continue;
+      }
+      total += take;
+      out.push(copy);
+      continue;
+    }
+    total += take;
     out.push(f);
   }
   return out;
@@ -286,11 +332,12 @@ try {
     process.exit(0);
   }
 
-  let eventSummary;
-  try { eventSummary = JSON.stringify(truncateStrings(event, 200)); } catch { eventSummary = input.slice(0, 500); }
-
+  // Only the fields the gates read. A whole-event dump (chiefly
+  // last_assistant_message) rotated the 1000-line log out inside two days;
+  // CLAUDE_WATCHDOG_DUMP_EVENTS is the way to get full payloads.
+  const bgCount = Array.isArray(event.background_tasks) ? event.background_tasks.length : 0;
   log(`--- session=${sessionId} stop_reason=${stopReason} ---`);
-  log(`event: ${eventSummary}`);
+  log(`event: session=${sessionId} stop_reason=${stopReason} stop_hook_active=${event.stop_hook_active === true} background_tasks=${bgCount}`);
   rotateLog();
 
   if (stopReason !== 'end_turn') {
@@ -352,10 +399,14 @@ try {
     process.exit(0);
   }
 
+  // One root for the whole run: local storage, the touched-file split, the
+  // commit range, and the instruction-file lookup must all agree on it.
+  const projRoot = hookCwd && hookCwd !== 'null' && existsSync(hookCwd) ? projectRoot(hookCwd) : null;
+
   let SESSIONS_DIR = GLOBAL_SESSIONS_DIR;
   if (LOCAL_STORAGE === '1' || LOCAL_STORAGE === 'true') {
-    if (hookCwd && hookCwd !== 'null' && existsSync(hookCwd)) {
-      const rootDir = projectRoot(hookCwd);
+    if (projRoot) {
+      const rootDir = projRoot;
       if (rootDir !== resolve(hookCwd)) log(`LOCAL_STORAGE: anchored to project root ${rootDir} (cwd was ${hookCwd})`);
       const localDir = join(rootDir, '.claude/tmp/claude-watchdog/sessions');
       try {
@@ -396,12 +447,19 @@ try {
   let cursorUuid = '';
   let cursorLinenum = 0;
   let deltaStart = 1;
+  // HEAD as of the previous analysis: the base of this slice's commit range.
+  // Absent from cursors written before line 4 existed.
+  let baseSha = '';
 
   if (existsSync(CURSOR_FILE)) {
     const cursorLines = readFileSync(CURSOR_FILE, 'utf8').split('\n');
     const rawUuid = cursorLines[0] || '';
     const rawLinenum = cursorLines[1] || '';
     const cursorTranscript = cursorLines[2] || '';
+    const rawSha = cursorLines[3] || '';
+
+    if (SHA_RE.test(rawSha)) baseSha = rawSha;
+    else if (rawSha) log('CURSOR: malformed base sha, no commit range');
 
     if (/^[A-Za-z0-9_-]+$/.test(rawUuid)) {
       cursorUuid = rawUuid;
@@ -417,6 +475,9 @@ try {
       log('CURSOR: stale transcript path, ignoring cursor');
       cursorUuid = '';
       cursorLinenum = 0;
+      // The slice reverts to the whole transcript, so the recorded sha no longer
+      // bounds it.
+      baseSha = '';
     }
   }
 
@@ -438,7 +499,7 @@ try {
   const deltaLines = allLines.slice(deltaStart - 1);
   writeFileSync(DELTA_FILE, deltaLines.join('\n'));
 
-  const stats = deltaStats(parseLines(deltaLines), hookCwd);
+  const stats = deltaStats(parseLines(deltaLines), projRoot ?? hookCwd ?? null);
   const toolUseCount = stats.toolUses;
   log(`tool_use count (delta): ${toolUseCount} (edits=${stats.edits} mutating_bash=${stats.mutatingBash} user_messages=${stats.userMessages})`);
   if (toolUseCount < MIN_TOOL_USES) {
@@ -503,9 +564,16 @@ try {
   const isInteractive = INTERACTIVE_RECS === '1' || INTERACTIVE_RECS === 'true';
   const safeTodoPath = join(safeCwd, '.claude/watchdog-todo.md').replace(/\n/g, '');
 
+  // Backgrounding the analyzer produced a relay that compressed the review to a
+  // third of its length, and twice skipped presenting it and acted on a finding
+  // instead. Both branches carry the same foreground/verbatim rule.
+  const foreground = `Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
+
+Present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.`;
+
   let postAnalysis;
   if (isInteractive) {
-    postAnalysis = `Present the full analysis to the user.
+    postAnalysis = `${foreground}
 
 Then, extract the recommendations from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
 - question: "Which recommendations would you like to address?"
@@ -515,24 +583,43 @@ Then, extract the recommendations from the Recommendations section. Each is tagg
 
 If the user selects any recommendations, save them as a markdown checklist to '${safeTodoPath}' (create the directory if needed). Put selected [instruction] items under a "## Rules to add" heading and all other selected items under a "## Tasks" heading; omit an empty heading. Format each item as an unchecked task: "- [ ] recommendation text". If the file already exists, overwrite it.
 
-Then stop.`;
+Do not act on any recommendation the user does not select. Then stop.`;
   } else {
-    postAnalysis = 'Present the analysis to the user, then stop.';
+    postAnalysis = `${foreground}
+
+Do not act on any recommendation unless the user asks. Then stop.`;
   }
 
   const hadCursor = Boolean(cursorUuid);
   const prevAnalysis = latestAnalysis(sessionId);
   const rulesOn = INCLUDE_RULES === '1' || INCLUDE_RULES === 'true';
-  const rules = rulesOn ? instructionFiles(hookCwd && existsSync(hookCwd) ? projectRoot(hookCwd) : null) : [];
+  const rules = rulesOn ? instructionFiles(projRoot, SESSIONS_DIR, sessionId) : [];
+
+  // A rebase, amend, or reclone can orphan the recorded base; a range the
+  // analyzer cannot resolve is worse than no range.
+  let commitRange = '';
+  if (baseSha && projRoot) {
+    if (gitHasCommit(projRoot, baseSha)) commitRange = baseSha;
+    else log(`GIT: recorded base ${baseSha} is not in this repository, no commit range`);
+  }
+
   const promptLines = [
     `Read and analyze the condensed session transcript at '${safeCondensed}'. The working directory is '${safeCwd}'.`,
     hadCursor
       ? 'This is a continuation: the transcript covers only work since the previous analysis.'
       : 'This is the first analysis for this session.',
-    `Files touched this slice: ${stats.files.length ? stats.files.join(', ') : 'none'}`,
   ];
+  if (commitRange) {
+    promptLines.push(`Commit range for this slice: git diff ${commitRange}..HEAD, plus git status and git diff for uncommitted work. That range is the slice boundary whether or not the work was committed.`);
+  }
+  // Most auto-mode edits go through Bash, so an empty editor-tool list is not
+  // evidence that nothing changed.
+  promptLines.push(`Files touched this slice: ${stats.files.length ? stats.files.join(', ') : 'no editor-tool edits detected; check commits and git status'}`);
+  if (stats.external.length) {
+    promptLines.push(`Files touched outside the project root (not part of the slice diff): ${stats.external.join(', ')}`);
+  }
   if (prevAnalysis) promptLines.push(`Previous analysis (optional context, read only if useful): ${prevAnalysis.replace(/\n/g, '')}`);
-  if (rules.length) promptLines.push(`User instruction files: ${rules.join(', ')}`);
+  if (rules.length) promptLines.push(`User instruction files (read only when a compliance question actually arises): ${rules.join(', ')}`);
   promptLines.push('Provide your critical analysis.');
   const safePrompt = promptLines.join('\n').replace(/"/g, "'");
 
@@ -549,8 +636,12 @@ ${postAnalysis}`;
   if (cursorResult) {
     if (/^[A-Za-z0-9_-]+$/.test(cursorResult.uuid)) {
       const absLine = (deltaStart - 1) + cursorResult.relLine;
-      writeFileSync(CURSOR_FILE, `${cursorResult.uuid}\n${absLine}\n${transcriptPath}\n`);
-      log(`CURSOR: updated to uuid=${cursorResult.uuid} line=${absLine}`);
+      // Line 4 is HEAD now, which the next run uses as its slice base. Empty
+      // when the cwd is not a repository; the line is written either way so the
+      // file is always four lines wide.
+      const headSha = projRoot ? gitHead(projRoot) : null;
+      writeFileSync(CURSOR_FILE, `${cursorResult.uuid}\n${absLine}\n${transcriptPath}\n${headSha ?? ''}\n`);
+      log(`CURSOR: updated to uuid=${cursorResult.uuid} line=${absLine} head=${headSha ?? 'none'}`);
     } else {
       log('CURSOR: invalid last-uuid output, cursor unchanged');
     }

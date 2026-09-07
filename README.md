@@ -109,7 +109,7 @@ with `/plugin configure claude-watchdog`:
 | Store transcripts in project directory | `true` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
 | Max transcript size (bytes) | `51200` | Maximum size of the condensed transcript sent to the analyzer (4 KB – 500 KB) |
 | Skip while background tasks run | `true` | Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a finished session, not a paused one. Requires Claude Code ≥ 2.1.145; a no-op on older versions |
-| Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/*.md` (project first, then `~/.claude`) so it can check the session against your own instructions. Files over 8 KB are skipped; the list is capped at 16 KB total |
+| Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/*.md` (project first, then `~/.claude`) so it can check the session against your own instructions. A file over 8 KB is passed as a truncated head - the first 8 KB, copied into the sessions dir as `rules-<session-id>-<n>-<name>` - rather than skipped; each file counts at most 8 KB toward the 16 KB total cap |
 | Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
 | Enforce pinned subagent models | `false` | Block a `Task`/`Agent` dispatch that names an agent whose definition pins a `model:` but passes no explicit `model` |
 
@@ -137,7 +137,7 @@ the plugin configuration prompt:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CLAUDE_WATCHDOG_LOG` | `~/.claude/logs/claude-watchdog.log` | Debug log path |
-| `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
+| `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines). The Stop hook logs one summary line per event (session id, stop reason, `stop_hook_active`, background-task count); use `CLAUDE_WATCHDOG_DUMP_EVENTS` for full payloads |
 | `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (weighted: 20% user messages, 80% recent context) |
 | `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |

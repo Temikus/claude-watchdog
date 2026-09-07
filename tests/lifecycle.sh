@@ -97,13 +97,13 @@ pass "log-no-rotation"
 # --- Test 3: stale scratch files are swept, cursors and fresh files survive ---
 new_case
 sid="life-sweep-$$"
-for p in condensed raw delta echo pending; do
+for p in condensed raw delta echo pending rules; do
   echo x > "$SESSIONS/${p}-stale.txt"; set_mtime "$SESSIONS/${p}-stale.txt" 10800   # 3h
   echo x > "$SESSIONS/${p}-fresh.txt"
 done
 # The cursor has its own 7-day TTL, so 3h old is nowhere near expiry.
 echo x > "$SESSIONS/cursor-stale.txt"; set_mtime "$SESSIONS/cursor-stale.txt" 10800
-# Anything that is not one of the six prefixes is not ours to delete.
+# Anything that is not one of the seven prefixes is not ours to delete.
 echo x > "$SESSIONS/unrelated-stale.txt"; set_mtime "$SESSIONS/unrelated-stale.txt" 10800
 mkdir -p "$SESSIONS/stale-marker"; set_mtime "$SESSIONS/stale-marker" 10800
 mkdir -p "$SESSIONS/fresh-marker"
@@ -112,7 +112,7 @@ set_mtime "$SESSIONS/stale-nonempty" 10800
 
 stop_run "$sid" "$TRANSCRIPT" CLAUDE_WATCHDOG_MIN_TOOL_USES=99 > /dev/null
 
-for p in condensed raw delta echo pending; do
+for p in condensed raw delta echo pending rules; do
   [ ! -e "$SESSIONS/${p}-stale.txt" ] || fail "cleanup-stale" "${p}-stale.txt survived the two-hour sweep"
   [ -e "$SESSIONS/${p}-fresh.txt" ] || fail "cleanup-fresh" "${p}-fresh.txt was swept while still fresh"
 done

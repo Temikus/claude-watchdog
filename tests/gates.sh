@@ -303,13 +303,29 @@ assert_out "touched-relative" "Files touched this slice: deep/nested/app.js"
 refute_out "touched-relative" "Files touched this slice: $PROJ"
 pass "touched-paths-relative-to-cwd"
 
+# A path outside the project root cannot appear in the slice diff, so it is
+# labelled separately instead of being mixed into the touched list.
 sid=$(new_sid)
 out_transcript="$TMPROOT/outside.jsonl"
 mk_edit_transcript "$out_transcript" Edit file_path "/etc/elsewhere.conf"
 gate_run "$sid" "$out_transcript" "$PROJ" ""
 assert_outcome "touched-outside" BLOCK
-assert_out "touched-outside" "Files touched this slice: /etc/elsewhere.conf"
-pass "touched-paths-outside-cwd-stay-absolute"
+assert_out "touched-outside" "Files touched outside the project root (not part of the slice diff): /etc/elsewhere.conf"
+refute_out "touched-outside" "Files touched this slice: /etc/elsewhere.conf"
+pass "touched-paths-outside-root-labelled-separately"
+
+# No editor-tool call in the slice does not mean nothing changed - most auto-mode
+# edits go through Bash - so the prompt says where to look instead of "none".
+sid=$(new_sid)
+noedit_transcript="$TMPROOT/no-editor-tools.jsonl"
+mk_bash_transcript "$noedit_transcript" "printf 'x' >> notes.txt"
+gate_run "$sid" "$noedit_transcript" "$PROJ" ""
+assert_outcome "touched-none" BLOCK
+assert_out "touched-none" "Files touched this slice: no editor-tool edits detected; check commits and git status"
+refute_out "touched-none" "Files touched this slice: none"
+# $PROJ has a .git directory but is not a repository, so no range can be derived.
+refute_out "touched-none" "Commit range for this slice"
+pass "touched-none-points-at-commits-and-git-status"
 
 # A newline in a path would break the one-line-per-field prompt.
 sid=$(new_sid)
@@ -320,6 +336,71 @@ gate_run "$sid" "$nl_transcript" "$PROJ" ""
 assert_outcome "touched-newline" BLOCK
 assert_out "touched-newline" "Files touched this slice: weird.js"
 pass "touched-paths-strip-newlines"
+
+# ===========================================================================
+# Commit range (the slice boundary the analyzer diffs against)
+# ===========================================================================
+
+gitproj="$TMPROOT/gitproj"
+mkdir -p "$gitproj"
+git -C "$gitproj" init -q
+git -C "$gitproj" -c user.email=t@e.st -c user.name=T commit -q --allow-empty -m first
+head1=$(git -C "$gitproj" rev-parse HEAD)
+
+# First analysis: nothing to diff against yet, but HEAD is recorded so the next
+# slice has a boundary.
+sid=$(new_sid)
+range_tp="$TMPROOT/range.jsonl"
+mk_transcript "$range_tp" 1 3 RANGE
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-first" BLOCK
+refute_out "range-first" "Commit range for this slice"
+[ "$(sed -n '4p' "$GSESSIONS/cursor-${sid}.txt")" = "$head1" ] \
+  || { cat "$GLOG" >&2; fail "range-first" "cursor line 4 does not hold HEAD"; }
+pass "commit-range-head-recorded-at-cursor-write"
+
+# Second analysis: the recorded sha becomes the base of the range, so the slice
+# is bounded whether or not the work was committed.
+git -C "$gitproj" -c user.email=t@e.st -c user.name=T commit -q --allow-empty -m second
+mk_transcript "$TMPROOT/range-more.jsonl" 4 6 RANGE
+cat "$TMPROOT/range-more.jsonl" >> "$range_tp"
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-second" BLOCK
+assert_out "range-second" "Commit range for this slice: git diff ${head1}..HEAD"
+pass "commit-range-passed-on-continuation"
+
+# A base sha that is no longer reachable (rebase, amend, reclone) must not reach
+# the prompt as a range the analyzer cannot resolve.
+sid=$(new_sid)
+printf 'u-RANGE-1\n1\n%s\n%s\n' "$range_tp" "0000000000000000000000000000000000000001" \
+  > "$GSESSIONS/cursor-${sid}.txt"
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-unknown" BLOCK
+refute_out "range-unknown" "Commit range for this slice"
+assert_log "range-unknown" "GIT: recorded base 0000000000000000000000000000000000000001 is not in this repository"
+pass "commit-range-unknown-base-dropped"
+
+# A cursor written by an older version has three lines and no sha.
+sid=$(new_sid)
+printf 'u-RANGE-1\n1\n%s\n' "$range_tp" > "$GSESSIONS/cursor-${sid}.txt"
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-legacy" BLOCK
+refute_out "range-legacy" "Commit range for this slice"
+pass "commit-range-absent-from-a-legacy-cursor"
+
+# ===========================================================================
+# Event log line
+# ===========================================================================
+
+# The gates read four fields off the event; logging the whole payload (with
+# last_assistant_message) rotated the log out inside two days.
+sid=$(new_sid)
+gate_run "$sid" "$sr_transcript" "$PROJ" \
+  '{stop_hook_active:false, background_tasks:[], last_assistant_message:"UNIQUEPAYLOADMARKER"}'
+assert_outcome "event-line" BLOCK
+assert_log "event-line" "event: session=$sid stop_reason=end_turn stop_hook_active=false background_tasks=0$"
+grep -q "UNIQUEPAYLOADMARKER" "$GLOG" && fail "event-line" "full event payload is still logged"
+pass "event-log-line-is-trimmed-to-the-gate-fields"
 
 # ===========================================================================
 # include_rules
@@ -335,8 +416,8 @@ printf 'global rules\n' > "$GHOME/.claude/CLAUDE.md"
 printf 'global extra rules\n' > "$GHOME/.claude/rules/aaa-global.md"
 gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-order" BLOCK
-assert_out "rules-order" "User instruction files: "
-rules_line=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o 'User instruction files: .*' | head -1)
+assert_out "rules-order" "User instruction files (read only when a compliance question actually arises): "
+rules_line=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o 'User instruction files.*' | head -1)
 [ -n "$rules_line" ] || fail "rules-order" "no rules line in prompt"
 # Project files must all precede global ones, even though the global rule sorts
 # first by filename.
@@ -347,14 +428,20 @@ glob_first=$(awk -v s="$rules_line" -v g="$GHOME" 'BEGIN{n=split(s,a,", "); for(
 [ "$proj_last" -lt "$glob_first" ] || fail "rules-order" "project files not before global: $rules_line"
 pass "rules-project-files-before-global"
 
-# Over 8 KB: skipped and the reason logged.
+# Over 8 KB: the head is copied into the sessions dir and that copy is passed,
+# so a large project CLAUDE.md is still checked instead of silently dropped.
 sid=$(new_sid)
 head -c 9000 /dev/zero | tr '\0' 'x' > "$rulesproj/.claude/rules/big.md"
 gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-8kb" BLOCK
-assert_log "rules-8kb" "RULES: skipped $rulesproj/.claude/rules/big.md (9000B, over 8KB)"
-refute_out "rules-8kb" "big.md"
-pass "rules-over-8kb-skipped-and-logged"
+assert_log "rules-8kb" "RULES: truncated $rulesproj/.claude/rules/big.md (9000B -> 8192B head)"
+refute_out "rules-8kb" "$rulesproj/.claude/rules/big.md"
+big_copy=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o "$GSESSIONS/rules-[^,\"]*big.md" | head -1)
+[ -n "$big_copy" ] || fail "rules-8kb" "no truncated copy in the prompt"
+[ -f "$big_copy" ] || fail "rules-8kb" "truncated copy $big_copy was not written"
+grep -q "$rulesproj/.claude/rules/big.md" "$big_copy" \
+  || fail "rules-8kb" "truncated copy does not name the file it came from"
+pass "rules-over-8kb-passed-as-a-truncated-head"
 rm -f "$rulesproj/.claude/rules/big.md"
 
 # 16 KB total cap: two 7000B project files fit (14000B); the next 7000B file
@@ -370,6 +457,20 @@ assert_outcome "rules-cap" BLOCK
 assert_log "rules-cap" "RULES: skipped $GHOME/.claude/CLAUDE.md (7000B, total cap)"
 assert_out "rules-cap" "aaa-global.md"
 pass "rules-16kb-total-cap"
+
+# An oversized file contributes its head, not its own size, to the total - so one
+# huge CLAUDE.md no longer starves every rule that follows it.
+sid=$(new_sid)
+head -c 40000 /dev/zero | tr '\0' 'a' > "$rulesproj/CLAUDE.md"
+printf 'small project rule\n' > "$rulesproj/.claude/rules/zzz-project.md"
+printf 'small global rule\n' > "$GHOME/.claude/CLAUDE.md"
+printf 'small global rule\n' > "$GHOME/.claude/rules/aaa-global.md"
+gate_run "$sid" "$sr_transcript" "$rulesproj" ""
+assert_outcome "rules-head-cap" BLOCK
+assert_log "rules-head-cap" "RULES: truncated $rulesproj/CLAUDE.md (40000B -> 8192B head)"
+assert_out "rules-head-cap" "zzz-project.md"
+assert_out "rules-head-cap" "aaa-global.md"
+pass "rules-oversize-head-counts-toward-the-total-cap"
 
 # Opt-out sends nothing at all.
 sid=$(new_sid)
@@ -407,7 +508,9 @@ rm -f "$GANALYSES/${sid}-"*.md "$GANALYSES/other-session-"*.md
 sid=$(new_sid)
 gate_run "$sid" "$sr_transcript" "$PROJ" ""
 assert_outcome "interactive-off" BLOCK
-assert_out "interactive-off" "Present the analysis to the user, then stop."
+assert_out "interactive-off" "Run the agent in the FOREGROUND"
+assert_out "interactive-off" "Present the analysis verbatim and in full"
+assert_out "interactive-off" "Do not act on any recommendation unless the user asks"
 refute_out "interactive-off" "AskUserQuestion"
 refute_out "interactive-off" "watchdog-todo.md"
 pass "interactive-recommendations-off-by-default"
@@ -415,10 +518,13 @@ pass "interactive-recommendations-off-by-default"
 sid=$(new_sid)
 gate_run "$sid" "$sr_transcript" "$PROJ" "" CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS=1
 assert_outcome "interactive-on" BLOCK
-assert_out "interactive-on" "Present the full analysis to the user."
+# The foreground / verbatim / do-not-act rules hold on both branches; only the
+# follow-up differs.
+assert_out "interactive-on" "Run the agent in the FOREGROUND"
+assert_out "interactive-on" "Present the analysis verbatim and in full"
 assert_out "interactive-on" "AskUserQuestion"
 assert_out "interactive-on" "$PROJ/.claude/watchdog-todo.md"
-refute_out "interactive-on" "Present the analysis to the user, then stop."
+refute_out "interactive-on" "Do not act on any recommendation unless the user asks"
 pass "interactive-recommendations-switches-block-and-todo-path"
 
 # ===========================================================================

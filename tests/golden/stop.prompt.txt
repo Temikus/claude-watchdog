@@ -5,8 +5,13 @@ Use the Agent tool with:
 - model: "sonnet"
 - prompt: "Read and analyze the condensed session transcript at '<TMP>/proj/.claude/tmp/claude-watchdog/sessions/condensed-<SESSION>.txt'. The working directory is '<TMP>/proj'.
 This is the first analysis for this session.
-Files touched this slice: stack.yaml, /repo/MAINTENANCE.md, out.txt
-User instruction files: <TMP>/proj/CLAUDE.md, <TMP>/home/.claude/rules/a-rules.md
+Files touched this slice: stack.yaml, out.txt
+Files touched outside the project root (not part of the slice diff): /repo/MAINTENANCE.md
+User instruction files (read only when a compliance question actually arises): <TMP>/proj/CLAUDE.md, <TMP>/home/.claude/rules/a-rules.md
 Provide your critical analysis."
 
-Present the analysis to the user, then stop.
+Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
+
+Present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
+
+Do not act on any recommendation unless the user asks. Then stop.
