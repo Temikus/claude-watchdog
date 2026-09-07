@@ -5,7 +5,8 @@ Use the Agent tool with:
 - model: "sonnet"
 - prompt: "Read and analyze the condensed session transcript at '<TMP>/proj/.claude/tmp/claude-watchdog/sessions/condensed-<SESSION>.txt'. The working directory is '<TMP>/proj'.
 This is the first analysis for this session.
-Files touched this slice: stack.yaml, /repo/MAINTENANCE.md, out.txt
+Files touched this slice: stack.yaml, out.txt
+Files touched outside the project root (not part of the slice diff): /repo/MAINTENANCE.md
 User instruction files: <TMP>/proj/CLAUDE.md, <TMP>/home/.claude/rules/a-rules.md
 Provide your critical analysis."
 

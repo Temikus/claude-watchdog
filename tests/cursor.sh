@@ -49,6 +49,11 @@ line1=$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid2}.txt")
 [ "$line1" = "a-OLD-5" ] || fail "first-run-cursor-uuid" "expected a-OLD-5 got $line1"
 line3=$(sed -n '3p' "$WATCHDOG_DIR/cursor-${sid2}.txt")
 [ "$line3" = "$t2_transcript" ] || fail "first-run-cursor-path" "expected $t2_transcript got $line3"
+# Line 4 is HEAD at cursor-write time, the base of the next slice's commit range.
+# The cwd here is this repo, so it resolves; a non-repo cwd leaves the line empty
+# but present, keeping the file four lines wide either way.
+line4=$(sed -n '4p' "$WATCHDOG_DIR/cursor-${sid2}.txt")
+[ "$line4" = "$(git rev-parse HEAD)" ] || fail "first-run-cursor-head" "expected $(git rev-parse HEAD) got '$line4'"
 cleanup_session "$sid2"
 pass "first-run"
 

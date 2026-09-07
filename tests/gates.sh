@@ -303,13 +303,29 @@ assert_out "touched-relative" "Files touched this slice: deep/nested/app.js"
 refute_out "touched-relative" "Files touched this slice: $PROJ"
 pass "touched-paths-relative-to-cwd"
 
+# A path outside the project root cannot appear in the slice diff, so it is
+# labelled separately instead of being mixed into the touched list.
 sid=$(new_sid)
 out_transcript="$TMPROOT/outside.jsonl"
 mk_edit_transcript "$out_transcript" Edit file_path "/etc/elsewhere.conf"
 gate_run "$sid" "$out_transcript" "$PROJ" ""
 assert_outcome "touched-outside" BLOCK
-assert_out "touched-outside" "Files touched this slice: /etc/elsewhere.conf"
-pass "touched-paths-outside-cwd-stay-absolute"
+assert_out "touched-outside" "Files touched outside the project root (not part of the slice diff): /etc/elsewhere.conf"
+refute_out "touched-outside" "Files touched this slice: /etc/elsewhere.conf"
+pass "touched-paths-outside-root-labelled-separately"
+
+# No editor-tool call in the slice does not mean nothing changed - most auto-mode
+# edits go through Bash - so the prompt says where to look instead of "none".
+sid=$(new_sid)
+noedit_transcript="$TMPROOT/no-editor-tools.jsonl"
+mk_bash_transcript "$noedit_transcript" "printf 'x' >> notes.txt"
+gate_run "$sid" "$noedit_transcript" "$PROJ" ""
+assert_outcome "touched-none" BLOCK
+assert_out "touched-none" "Files touched this slice: no editor-tool edits detected; check commits and git status"
+refute_out "touched-none" "Files touched this slice: none"
+# $PROJ has a .git directory but is not a repository, so no range can be derived.
+refute_out "touched-none" "Commit range for this slice"
+pass "touched-none-points-at-commits-and-git-status"
 
 # A newline in a path would break the one-line-per-field prompt.
 sid=$(new_sid)
@@ -320,6 +336,57 @@ gate_run "$sid" "$nl_transcript" "$PROJ" ""
 assert_outcome "touched-newline" BLOCK
 assert_out "touched-newline" "Files touched this slice: weird.js"
 pass "touched-paths-strip-newlines"
+
+# ===========================================================================
+# Commit range (the slice boundary the analyzer diffs against)
+# ===========================================================================
+
+gitproj="$TMPROOT/gitproj"
+mkdir -p "$gitproj"
+git -C "$gitproj" init -q
+git -C "$gitproj" -c user.email=t@e.st -c user.name=T commit -q --allow-empty -m first
+head1=$(git -C "$gitproj" rev-parse HEAD)
+
+# First analysis: nothing to diff against yet, but HEAD is recorded so the next
+# slice has a boundary.
+sid=$(new_sid)
+range_tp="$TMPROOT/range.jsonl"
+mk_transcript "$range_tp" 1 3 RANGE
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-first" BLOCK
+refute_out "range-first" "Commit range for this slice"
+[ "$(sed -n '4p' "$GSESSIONS/cursor-${sid}.txt")" = "$head1" ] \
+  || { cat "$GLOG" >&2; fail "range-first" "cursor line 4 does not hold HEAD"; }
+pass "commit-range-head-recorded-at-cursor-write"
+
+# Second analysis: the recorded sha becomes the base of the range, so the slice
+# is bounded whether or not the work was committed.
+git -C "$gitproj" -c user.email=t@e.st -c user.name=T commit -q --allow-empty -m second
+mk_transcript "$TMPROOT/range-more.jsonl" 4 6 RANGE
+cat "$TMPROOT/range-more.jsonl" >> "$range_tp"
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-second" BLOCK
+assert_out "range-second" "Commit range for this slice: git diff ${head1}..HEAD"
+pass "commit-range-passed-on-continuation"
+
+# A base sha that is no longer reachable (rebase, amend, reclone) must not reach
+# the prompt as a range the analyzer cannot resolve.
+sid=$(new_sid)
+printf 'u-RANGE-1\n1\n%s\n%s\n' "$range_tp" "0000000000000000000000000000000000000001" \
+  > "$GSESSIONS/cursor-${sid}.txt"
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-unknown" BLOCK
+refute_out "range-unknown" "Commit range for this slice"
+assert_log "range-unknown" "GIT: recorded base 0000000000000000000000000000000000000001 is not in this repository"
+pass "commit-range-unknown-base-dropped"
+
+# A cursor written by an older version has three lines and no sha.
+sid=$(new_sid)
+printf 'u-RANGE-1\n1\n%s\n' "$range_tp" > "$GSESSIONS/cursor-${sid}.txt"
+gate_run "$sid" "$range_tp" "$gitproj" ""
+assert_outcome "range-legacy" BLOCK
+refute_out "range-legacy" "Commit range for this slice"
+pass "commit-range-absent-from-a-legacy-cursor"
 
 # ===========================================================================
 # Event log line

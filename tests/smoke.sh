@@ -38,7 +38,9 @@ cat "$sessions/condensed-${session_id}.txt" 2>/dev/null || echo "(not found)"
 [ "$STOP_RC" -eq 0 ] || fail "smoke-exit" "expected exit 0, got $STOP_RC"
 echo "$STOP_OUT" | grep -q '"decision":"block"' || fail "smoke-decision" "expected decision:block on stdout"
 echo "$STOP_OUT" | grep -q 'This is the first analysis for this session.' || fail "smoke-first-analysis" "expected first-analysis marker in prompt"
-echo "$STOP_OUT" | grep -q 'Files touched this slice: /tmp/test' || fail "smoke-touched-files" "expected touched files in prompt"
+# /tmp/test is outside the hook cwd's project root, so it is labelled as such
+# rather than offered to the analyzer as part of the slice diff.
+echo "$STOP_OUT" | grep -q 'Files touched outside the project root (not part of the slice diff): /tmp/test' || fail "smoke-touched-files" "expected the out-of-root touched file in prompt"
 # Input-hold is opt-in: the default run above must not write a pending sentinel.
 [ ! -f "$HOME/.claude/tmp/claude-watchdog/sessions/pending-${session_id}" ] || fail "smoke-pending" "pending sentinel written without opt-in"
 
