@@ -137,7 +137,7 @@ the plugin configuration prompt:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CLAUDE_WATCHDOG_LOG` | `~/.claude/logs/claude-watchdog.log` | Debug log path |
-| `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines) |
+| `CLAUDE_WATCHDOG_LOG_MAX_LINES` | `1000` | Log rotation threshold (lines). The Stop hook logs one summary line per event (session id, stop reason, `stop_hook_active`, background-task count); use `CLAUDE_WATCHDOG_DUMP_EVENTS` for full payloads |
 | `CLAUDE_WATCHDOG_MAX_BYTES` | `51200` | Condensed transcript size cap (weighted: 20% user messages, 80% recent context) |
 | `CLAUDE_WATCHDOG_TMP` | `${CLAUDE_PLUGIN_DATA}` | Plugin-owned data root. Per-session files live in a `sessions/` subdirectory underneath |
 | `CLAUDE_WATCHDOG_ANALYSES_DIR` | `~/.claude/logs/claude-watchdog-analyses` | Directory for persisted analysis results (capped at 20) |

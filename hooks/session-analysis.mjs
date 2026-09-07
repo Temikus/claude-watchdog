@@ -6,7 +6,7 @@ import {
 import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { slice, lastUuid } from './cursor-slice.mjs';
-import { extractTranscript, condense, counts, clip } from './condense.mjs';
+import { extractTranscript, condense, counts } from './condense.mjs';
 import { dumpEvent } from './dump-events.mjs';
 
 // Everything this hook creates - the log, the sessions dirs, the delta, the
@@ -102,17 +102,6 @@ function capAnalyses() {
       try { unlinkSync(join(ANALYSES_DIR, f.name)); } catch { /* ignore */ }
     }
   } catch { /* dir may not exist or be empty */ }
-}
-
-function truncateStrings(val, max) {
-  if (typeof val === 'string') return val.length > max ? clip(val, max) + '...[truncated]' : val;
-  if (Array.isArray(val)) return val.map(v => truncateStrings(v, max));
-  if (val && typeof val === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(val)) out[k] = truncateStrings(v, max);
-    return out;
-  }
-  return val;
 }
 
 // Anchor project-local storage to the project root, not the shell's cwd at stop
@@ -286,11 +275,12 @@ try {
     process.exit(0);
   }
 
-  let eventSummary;
-  try { eventSummary = JSON.stringify(truncateStrings(event, 200)); } catch { eventSummary = input.slice(0, 500); }
-
+  // Only the fields the gates read. A whole-event dump (chiefly
+  // last_assistant_message) rotated the 1000-line log out inside two days;
+  // CLAUDE_WATCHDOG_DUMP_EVENTS is the way to get full payloads.
+  const bgCount = Array.isArray(event.background_tasks) ? event.background_tasks.length : 0;
   log(`--- session=${sessionId} stop_reason=${stopReason} ---`);
-  log(`event: ${eventSummary}`);
+  log(`event: session=${sessionId} stop_reason=${stopReason} stop_hook_active=${event.stop_hook_active === true} background_tasks=${bgCount}`);
   rotateLog();
 
   if (stopReason !== 'end_turn') {

@@ -322,6 +322,20 @@ assert_out "touched-newline" "Files touched this slice: weird.js"
 pass "touched-paths-strip-newlines"
 
 # ===========================================================================
+# Event log line
+# ===========================================================================
+
+# The gates read four fields off the event; logging the whole payload (with
+# last_assistant_message) rotated the log out inside two days.
+sid=$(new_sid)
+gate_run "$sid" "$sr_transcript" "$PROJ" \
+  '{stop_hook_active:false, background_tasks:[], last_assistant_message:"UNIQUEPAYLOADMARKER"}'
+assert_outcome "event-line" BLOCK
+assert_log "event-line" "event: session=$sid stop_reason=end_turn stop_hook_active=false background_tasks=0$"
+grep -q "UNIQUEPAYLOADMARKER" "$GLOG" && fail "event-line" "full event payload is still logged"
+pass "event-log-line-is-trimmed-to-the-gate-fields"
+
+# ===========================================================================
 # include_rules
 # ===========================================================================
 
