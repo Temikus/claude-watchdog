@@ -39,7 +39,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "session-analyzer",
+        "matcher": "^claude-watchdog:session-analyzer$",
         "hooks": [
           {
             "type": "command",

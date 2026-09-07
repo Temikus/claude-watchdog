@@ -34,7 +34,11 @@ try {
   const sessionId = event.session_id ?? '';
   const message = event.last_assistant_message ?? '';
 
-  if (agentType !== 'session-analyzer') process.exit(0);
+  // Plugin-scoped dispatches report agent_type as "<plugin>:session-analyzer".
+  if (!/(^|:)session-analyzer$/.test(agentType)) {
+    log(`SKIP: agent_type '${agentType}' does not match session-analyzer`);
+    process.exit(0);
+  }
 
   if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
     log('SKIP: invalid session_id');
@@ -56,6 +60,7 @@ try {
 
   const size = Buffer.byteLength(message + '\n', 'utf8');
   log(`WROTE: ${outputFile} (${size} bytes)`);
+  console.log(`Analysis saved to: ${outputFile}`);
 
   const files = readdirSync(ANALYSES_DIR)
     .filter(f => f.endsWith('.md'))

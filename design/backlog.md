@@ -31,17 +31,13 @@ not here.
 
 ## MEDIUM PRIORITY
 
-### 3. Confirm analysis save path to the user
+### 3. ~~Confirm analysis save path to the user~~ — done
 
-**Problem:** The SubagentStop hook persists analyses silently. Users never see
-where the file was saved and have no way to find it after the session ends.
-
-**Fix:** Have `hooks/persist-analysis.sh` output the save path on stdout
-(exit 0) so it appears in the transcript, e.g.:
-
-```
-Analysis saved to: ~/.claude/logs/claude-watchdog-analyses/<session>-<ts>.md
-```
+**Status: done**, alongside the agent_type fix (#33): `persist-analysis.mjs`
+was silently failing to match plugin-scoped `agent_type` values, so this item
+was blocked on that bug rather than unimplemented. Now fixed:
+`persist-analysis.mjs` prints `Analysis saved to: <path>` on stdout after a
+successful write.
 
 ---
 

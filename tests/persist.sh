@@ -21,6 +21,10 @@ out=$(ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid1}-*.md 2>/dev/null | head -1)
 grep -q "### Goals" "$out" || fail "analyzer-content" "file missing content"
 pass "analyzer-writes"
 
+# --- Test 1b: save path is echoed to stdout so the user sees where it landed ---
+echo "$PERSIST_OUT" | grep -q "Analysis saved to: $out" || fail "save-path-echoed" "stdout missing save path"
+pass "save-path-echoed"
+
 # --- Test 2: other subagent types are ignored ---
 sid2="persist-t2-$$"
 run_persist "$(jq -n --arg sid "$sid2" --arg msg "ignored" \
@@ -61,5 +65,24 @@ run_persist "$(jq -n --arg sid "$sid6" \
   '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:""}')"
 [ ! -f "$SESSIONS/pending-${sid6}" ] || fail "pending-cleared-empty" "pending sentinel not removed on empty message"
 pass "pending-cleared-empty-message"
+
+# --- Test 7: plugin-scoped agent_type is accepted ---
+sid7="persist-t7-$$"
+run_persist "$(jq -n --arg sid "$sid7" --arg msg $'### Goals\nScoped analysis.' \
+  '{session_id:$sid, agent_type:"claude-watchdog:session-analyzer", last_assistant_message:$msg}')"
+out=$(ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid7}-*.md 2>/dev/null | head -1)
+[ -n "$out" ] || fail "scoped-agent-type" "no analysis file written for scoped agent_type"
+pass "scoped-agent-type"
+
+# --- Test 8: non-matching agent_type is skipped and logged with the observed value ---
+sid8="persist-t8-$$"
+run_persist "$(jq -n --arg sid "$sid8" --arg msg "ignored" \
+  '{session_id:$sid, agent_type:"general-purpose", last_assistant_message:$msg}')"
+if ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid8}-*.md >/dev/null 2>&1; then
+  fail "non-matching-agent-type" "wrote file for non-matching agent_type"
+fi
+grep -q "SKIP: agent_type 'general-purpose' does not match session-analyzer" "$CLAUDE_WATCHDOG_LOG" \
+  || fail "non-matching-agent-type-log" "no skip log for non-matching agent_type"
+pass "non-matching-agent-type-logged"
 
 echo "--- all persist tests passed ---"
