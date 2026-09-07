@@ -493,9 +493,16 @@ try {
   const isInteractive = INTERACTIVE_RECS === '1' || INTERACTIVE_RECS === 'true';
   const safeTodoPath = join(safeCwd, '.claude/watchdog-todo.md').replace(/\n/g, '');
 
+  // Backgrounding the analyzer produced a relay that compressed the review to a
+  // third of its length, and twice skipped presenting it and acted on a finding
+  // instead. Both branches carry the same foreground/verbatim rule.
+  const foreground = `Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
+
+Present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.`;
+
   let postAnalysis;
   if (isInteractive) {
-    postAnalysis = `Present the full analysis to the user.
+    postAnalysis = `${foreground}
 
 Then, extract the recommendations from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
 - question: "Which recommendations would you like to address?"
@@ -505,9 +512,11 @@ Then, extract the recommendations from the Recommendations section. Each is tagg
 
 If the user selects any recommendations, save them as a markdown checklist to '${safeTodoPath}' (create the directory if needed). Put selected [instruction] items under a "## Rules to add" heading and all other selected items under a "## Tasks" heading; omit an empty heading. Format each item as an unchecked task: "- [ ] recommendation text". If the file already exists, overwrite it.
 
-Then stop.`;
+Do not act on any recommendation the user does not select. Then stop.`;
   } else {
-    postAnalysis = 'Present the analysis to the user, then stop.';
+    postAnalysis = `${foreground}
+
+Do not act on any recommendation unless the user asks. Then stop.`;
   }
 
   const hadCursor = Boolean(cursorUuid);
