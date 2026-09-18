@@ -152,7 +152,29 @@ function projectRoot(startDir) {
 }
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const READ_ONLY_BASH = /^\s*(git diff|git log|git status|git show|ls|cat|grep|rg|find|head|tail|wc|sed -n)\b/;
+const READ_ONLY_SEGMENT = /^\s*(git diff|git log|git status|git show|ls|cat|grep|rg|find|head|tail|wc|sed -n|cd|pwd|echo|which|od|stat|file|diff|jq|sort|uniq|cut)\b/;
+// A leading `VAR=value` run: `P=~/x; ls $P` is a read-only command whose first
+// word is an assignment, not a verb. The trailing space is optional so that a
+// segment which is nothing but an assignment reduces to empty.
+const LEADING_ASSIGNMENTS = /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s*)*/;
+const SEGMENT_SEPARATORS = /;|&&|\|\||\|/;
+// `find` is read-only until it is handed something to run.
+const FIND_ACTIONS = /\B-(exec|execdir|delete|ok|okdir)\b/;
+
+// Read-only only when EVERY segment is, and none redirects. Shell this cannot
+// parse (loops, conditionals, substitution) has no read-only verb in the first
+// position and so falls through as mutating, which is the safe direction.
+function isReadOnlyBash(command) {
+  const cmd = String(command ?? '');
+  if (!cmd.trim()) return false;
+  if (/>/.test(cmd) || FIND_ACTIONS.test(cmd)) return false;
+  return cmd.split(SEGMENT_SEPARATORS).every(seg => {
+    // A segment that is nothing but assignments (`P=/tmp`) sets a variable and
+    // touches no file.
+    const verb = seg.replace(LEADING_ASSIGNMENTS, '');
+    return !verb.trim() || READ_ONLY_SEGMENT.test(verb);
+  });
+}
 
 function parseLines(lines) {
   const out = [];
@@ -197,7 +219,7 @@ function deltaStats(entries, rootDir) {
       if (EDIT_TOOLS.has(block.name)) {
         edits++;
         addFile(block.input?.file_path ?? block.input?.notebook_path);
-      } else if (block.name === 'Bash' && !READ_ONLY_BASH.test(String(block.input?.command ?? ''))) {
+      } else if (block.name === 'Bash' && !isReadOnlyBash(block.input?.command)) {
         mutatingBash++;
       }
     }
@@ -205,15 +227,26 @@ function deltaStats(entries, rootDir) {
   return { toolUses, userMessages, edits, mutatingBash, files: [...files], external: [...external] };
 }
 
+const ANALYSIS_HEADER = '### Goals';
+
+// Newest file that actually looks like an analysis - see the header check in
+// persist-analysis.mjs for what else lands in this directory.
 function latestAnalysis(sessionId) {
   try {
     const names = readdirSync(ANALYSES_DIR).filter(f => f.startsWith(`${sessionId}-`) && f.endsWith('.md')).sort();
-    return names.length ? join(ANALYSES_DIR, names[names.length - 1]) : null;
+    for (let i = names.length - 1; i >= 0; i--) {
+      const full = join(ANALYSES_DIR, names[i]);
+      try {
+        if (readFileSync(full, 'utf8').startsWith(ANALYSIS_HEADER)) return full;
+      } catch { /* unreadable, try the one before it */ }
+    }
+    return null;
   } catch { return null; }
 }
 
 const RULES_HEAD_BYTES = 8192;
 const RULES_TOTAL_BYTES = 16384;
+const RULES_MAX_DEPTH = 3;
 
 // Cut a Buffer at max bytes without splitting a UTF-8 sequence: back off past
 // any continuation byte (10xxxxxx) that would be left orphaned by the cut.
@@ -230,10 +263,18 @@ function utf8Head(buf, max) {
 // head, not the original size, is what counts toward the total cap.
 function instructionFiles(rootDir, outDir, sessionId) {
   const candidates = [];
-  const rulesIn = (dir) => {
-    try {
-      return readdirSync(dir).filter(f => f.endsWith('.md')).sort().map(f => join(dir, f));
-    } catch { return []; }
+  // Rule directories get organised into subdirectories (personal/, common/), and
+  // a flat read found nothing at all for exactly the people with the most rules.
+  const rulesIn = (dir, depth = RULES_MAX_DEPTH) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    const out = [];
+    for (const e of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = join(dir, e.name);
+      if (e.isFile() && e.name.endsWith('.md')) out.push(full);
+      else if (e.isDirectory() && depth > 1) out.push(...rulesIn(full, depth - 1));
+    }
+    return out;
   };
   if (rootDir) {
     candidates.push(join(rootDir, 'CLAUDE.md'), ...rulesIn(join(rootDir, '.claude/rules')));
@@ -613,8 +654,12 @@ Do not act on any recommendation unless the user asks. Then stop.`;
     promptLines.push(`Commit range for this slice: git diff ${commitRange}..HEAD, plus git status and git diff for uncommitted work. That range is the slice boundary whether or not the work was committed.`);
   }
   // Most auto-mode edits go through Bash, so an empty editor-tool list is not
-  // evidence that nothing changed.
-  promptLines.push(`Files touched this slice: ${stats.files.length ? stats.files.join(', ') : 'no editor-tool edits detected; check commits and git status'}`);
+  // evidence that nothing changed. When the only edits were out of root, saying
+  // none were detected contradicts the line that lists them immediately below.
+  const emptyTouched = stats.external.length
+    ? 'no edits inside the project root; this slice\'s editor-tool edits were all outside it (see next line)'
+    : 'no editor-tool edits detected; check commits and git status';
+  promptLines.push(`Files touched this slice: ${stats.files.length ? stats.files.join(', ') : emptyTouched}`);
   if (stats.external.length) {
     promptLines.push(`Files touched outside the project root (not part of the slice diff): ${stats.external.join(', ')}`);
   }

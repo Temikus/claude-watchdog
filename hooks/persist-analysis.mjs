@@ -54,6 +54,14 @@ try {
     process.exit(0);
   }
 
+  // The analyzer stops twice: once with the report, once with a short ack after
+  // handing it back. Both carry agent_type, so the ack used to be persisted as
+  // its own file and, being newer, became what the next slice read back.
+  if (!message.startsWith('### Goals')) {
+    log(`SKIP: message is not an analysis (no '### Goals' header) for session=${sessionId}`);
+    process.exit(0);
+  }
+
   const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
   const outputFile = join(ANALYSES_DIR, `${sessionId}-${ts}.md`);
   writeFileSync(outputFile, message + '\n');
