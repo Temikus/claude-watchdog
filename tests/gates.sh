@@ -199,6 +199,13 @@ sed -i.bak s/a/b/ file.txt|BLOCK|sed-i-is-mutating
     git diff --stat|SKIP|leading-whitespace-tolerated
 git diff|SKIP|git-diff-is-read-only
 git push origin main|BLOCK|git-push-is-mutating
+P=/tmp; ls -la $P|SKIP|leading-assignment-stripped
+FOO=1 BAR=2 cat f|SKIP|inline-assignments-stripped
+cd /tmp && cat f|SKIP|every-segment-read-only
+cd /tmp && rm -rf build|BLOCK|one-mutating-segment-is-enough
+cat f > out|BLOCK|redirect-is-mutating
+cat f >> out|BLOCK|append-redirect-is-mutating
+for f in *; do cat $f; done|BLOCK|shell-control-flow-is-mutating
 CMDS
 
 # ===========================================================================
@@ -312,6 +319,10 @@ gate_run "$sid" "$out_transcript" "$PROJ" ""
 assert_outcome "touched-outside" BLOCK
 assert_out "touched-outside" "Files touched outside the project root (not part of the slice diff): /etc/elsewhere.conf"
 refute_out "touched-outside" "Files touched this slice: /etc/elsewhere.conf"
+# The editor-tool edits exist, they are just out of root - so the touched line
+# must not claim none were detected while the next line lists them.
+refute_out "touched-outside" "no editor-tool edits detected"
+assert_out "touched-outside" "Files touched this slice: no edits inside the project root"
 pass "touched-paths-outside-root-labelled-separately"
 
 # No editor-tool call in the slice does not mean nothing changed - most auto-mode
@@ -428,6 +439,19 @@ glob_first=$(awk -v s="$rules_line" -v g="$GHOME" 'BEGIN{n=split(s,a,", "); for(
 [ "$proj_last" -lt "$glob_first" ] || fail "rules-order" "project files not before global: $rules_line"
 pass "rules-project-files-before-global"
 
+# Rule directories are organised into subdirectories (personal/, common/), so a
+# flat glob finds nothing at all for the people with the most rules.
+sid=$(new_sid)
+mkdir -p "$rulesproj/.claude/rules/topic" "$GHOME/.claude/rules/personal/deep"
+printf 'nested project rule\n' > "$rulesproj/.claude/rules/topic/nested.md"
+printf 'nested global rule\n' > "$GHOME/.claude/rules/personal/deep/buried.md"
+gate_run "$sid" "$sr_transcript" "$rulesproj" ""
+assert_outcome "rules-nested" BLOCK
+assert_out "rules-nested" "$rulesproj/.claude/rules/topic/nested.md"
+assert_out "rules-nested" "$GHOME/.claude/rules/personal/deep/buried.md"
+pass "rules-found-in-subdirectories"
+rm -rf "$rulesproj/.claude/rules/topic" "$GHOME/.claude/rules/personal"
+
 # Over 8 KB: the head is copied into the sessions dir and that copy is passed,
 # so a large project CLAUDE.md is still checked instead of silently dropped.
 sid=$(new_sid)
@@ -490,16 +514,37 @@ refute_out "prev-analysis-absent" "Previous analysis"
 pass "no-previous-analysis-line-when-none-exists"
 
 sid=$(new_sid)
-: > "$GANALYSES/${sid}-20260101T000000Z.md"
-: > "$GANALYSES/${sid}-20260615T120000Z.md"
-: > "$GANALYSES/${sid}-20260302T000000Z.md"
-: > "$GANALYSES/other-session-20261231T000000Z.md"
+printf '### Goals\nold\n' > "$GANALYSES/${sid}-20260101T000000Z.md"
+printf '### Goals\nnewest\n' > "$GANALYSES/${sid}-20260615T120000Z.md"
+printf '### Goals\nmiddle\n' > "$GANALYSES/${sid}-20260302T000000Z.md"
+printf '### Goals\nother\n' > "$GANALYSES/other-session-20261231T000000Z.md"
 gate_run "$sid" "$sr_transcript" "$PROJ" ""
 assert_outcome "prev-analysis" BLOCK
 assert_out "prev-analysis" "Previous analysis (optional context, read only if useful): $GANALYSES/${sid}-20260615T120000Z.md"
 refute_out "prev-analysis" "20260302T000000Z"
 pass "previous-analysis-points-at-newest"
 rm -f "$GANALYSES/${sid}-"*.md "$GANALYSES/other-session-"*.md
+
+# A file that is not an analysis (a stray handback ack persisted by an older
+# build) must not shadow the real one just by sorting last.
+sid=$(new_sid)
+printf '### Goals\nthe real analysis\n' > "$GANALYSES/${sid}-20260101T000000Z.md"
+printf 'Report delivered.\n' > "$GANALYSES/${sid}-20260615T120000Z.md"
+gate_run "$sid" "$sr_transcript" "$PROJ" ""
+assert_outcome "prev-analysis-ack" BLOCK
+assert_out "prev-analysis-ack" "Previous analysis (optional context, read only if useful): $GANALYSES/${sid}-20260101T000000Z.md"
+refute_out "prev-analysis-ack" "20260615T120000Z"
+pass "previous-analysis-skips-non-analysis-files"
+rm -f "$GANALYSES/${sid}-"*.md
+
+# Nothing but non-analysis files is the same as nothing at all.
+sid=$(new_sid)
+printf 'Report delivered.\n' > "$GANALYSES/${sid}-20260101T000000Z.md"
+gate_run "$sid" "$sr_transcript" "$PROJ" ""
+assert_outcome "prev-analysis-none-valid" BLOCK
+refute_out "prev-analysis-none-valid" "Previous analysis"
+pass "previous-analysis-absent-when-no-file-qualifies"
+rm -f "$GANALYSES/${sid}-"*.md
 
 # ===========================================================================
 # interactive_recommendations

@@ -300,8 +300,14 @@ fi
 # Persist hook lifecycle
 # ---------------------------------------------------------------------------
 
+# The hook persists analyses only, identified by the '### Goals' header the
+# analyzer is required to open with, so the header is part of every payload here
+# and $2 is the body below it. ANALYSIS_HEADER_BYTES is its on-disk cost.
+ANALYSIS_HEADER=$'### Goals\n'
+ANALYSIS_HEADER_BYTES=10
+
 persist_run() {
-  local sid="$1" msg="$2"
+  local sid="$1" msg="${ANALYSIS_HEADER}$2"
   run_persist "$(jq -n --arg sid "$sid" --arg msg "$msg" \
     '{session_id:$sid, agent_type:"session-analyzer", last_assistant_message:$msg}')" \
     "CLAUDE_WATCHDOG_TMP=$GTMP" "CLAUDE_WATCHDOG_ANALYSES_DIR=$ANALYSES" "CLAUDE_WATCHDOG_LOG=$LOG"
@@ -357,7 +363,8 @@ persist_run "$sid" "$large"
 written=$(find "$ANALYSES" -name "${sid}-*.md" | head -1)
 [ -n "$written" ] || { cat "$LOG"; fail "persist-under-cap" "no file written for a 100KB message"; }
 size=$(wc -c < "$written" | tr -d ' ')
-[ "$size" -eq 100001 ] || fail "persist-under-cap" "expected 100001 bytes, got $size"
+want=$(( 100000 + ANALYSIS_HEADER_BYTES + 1 ))   # body + header + trailing newline
+[ "$size" -eq "$want" ] || fail "persist-under-cap" "expected $want bytes, got $size"
 pass "persist-under-stdin-cap"
 
 echo "--- all lifecycle tests passed ---"

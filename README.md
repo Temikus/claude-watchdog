@@ -88,7 +88,7 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - Transcript exists at the path the event gives
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
 - The unanalyzed delta has ≥ the configured minimum tool calls (default 15)
-- The delta contains at least one file edit (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) or a non-read-only `Bash` command - read-only exploration turns are not reviewed
+- The delta contains at least one file edit (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) or a non-read-only `Bash` command - read-only exploration turns are not reviewed. A `Bash` call counts as read-only only when *every* segment of it does (`;`, `&&`, `||`, `|` are split, leading `VAR=value` assignments ignored) and it contains no redirect; anything the classifier cannot read as read-only - loops, conditionals, `$(...)` - counts as mutating
 - The delta contains at least one top-level user message
 - Condensed transcript is non-empty after filtering
 
@@ -109,7 +109,7 @@ with `/plugin configure claude-watchdog`:
 | Store transcripts in project directory | `true` | Store session files under `.claude/tmp/claude-watchdog/` in the project directory instead of the global plugin data path. Eliminates Read permission prompts in `auto` mode. Requires `.claude/` in `.gitignore` |
 | Max transcript size (bytes) | `51200` | Maximum size of the condensed transcript sent to the analyzer (4 KB – 500 KB) |
 | Skip while background tasks run | `true` | Skip analysis when background tasks (subagents, shell jobs, workflows) are still in flight, so the watchdog only reviews a finished session, not a paused one. Requires Claude Code ≥ 2.1.145; a no-op on older versions |
-| Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/*.md` (project first, then `~/.claude`) so it can check the session against your own instructions. A file over 8 KB is passed as a truncated head - the first 8 KB, copied into the sessions dir as `rules-<session-id>-<n>-<name>` - rather than skipped; each file counts at most 8 KB toward the 16 KB total cap |
+| Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/**/*.md` (project first, then `~/.claude`; rule directories are searched recursively, up to 3 levels deep) so it can check the session against your own instructions. A file over 8 KB is passed as a truncated head - the first 8 KB, copied into the sessions dir as `rules-<session-id>-<n>-<name>` - rather than skipped; each file counts at most 8 KB toward the 16 KB total cap |
 | Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
 | Enforce pinned subagent models | `false` | Block a `Task`/`Agent` dispatch that names an agent whose definition pins a `model:` but passes no explicit `model` |
 
@@ -123,7 +123,7 @@ take priority over the plugin config. Set these in your shell profile or
 | --- | --- | --- |
 | `CLAUDE_WATCHDOG_DISABLED` | `0` | Set to `1` to disable the hook globally |
 | `CLAUDE_WATCHDOG_MIN_TOOL_USES` | `15` | Override minimum tool calls threshold |
-| `CLAUDE_WATCHDOG_INCLUDE_RULES` | `1` | Set to `0` to stop passing `CLAUDE.md` / `.claude/rules/*.md` paths to the analyzer |
+| `CLAUDE_WATCHDOG_INCLUDE_RULES` | `1` | Set to `0` to stop passing `CLAUDE.md` / `.claude/rules/**/*.md` paths to the analyzer |
 | `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `600` | Override cooldown between analyses |
 | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `1` | Set to `0` to analyze even while background tasks (subagents, shell jobs, workflows) are still in flight. **This flag also gates the session-cron dedup guard** (see below), so setting it to `0` re-enables analysis in both cases |
 | `CLAUDE_WATCHDOG_HOLD_INPUT` | `0` | Set to `1` to hold newly submitted prompts while an analysis is in flight (see below) |

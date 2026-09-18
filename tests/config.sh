@@ -288,7 +288,7 @@ new_log
 PERSIST_AN="$TMPROOT/persist-analyses"
 sid="cfg-perm-p-$$"
 ( umask 022
-  run_persist "$(jq -n --arg s "$sid" '{session_id:$s, agent_type:"session-analyzer", last_assistant_message:"analysis body"}')" \
+  run_persist "$(jq -n --arg s "$sid" '{session_id:$s, agent_type:"session-analyzer", last_assistant_message:"### Goals\nanalysis body"}')" \
     CLAUDE_WATCHDOG_ANALYSES_DIR="$PERSIST_AN" CLAUDE_WATCHDOG_LOG="$LOG" CLAUDE_WATCHDOG_TMP="$TMPROOT/persist-tmp" )
 m=$(mode_of "$PERSIST_AN")
 [ "$m" = "700" ] || fail "perm-persist-dir" "$PERSIST_AN is $m, expected 700"

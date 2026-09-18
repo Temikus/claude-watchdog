@@ -85,4 +85,21 @@ grep -q "SKIP: agent_type 'general-purpose' does not match session-analyzer" "$C
   || fail "non-matching-agent-type-log" "no skip log for non-matching agent_type"
 pass "non-matching-agent-type-logged"
 
+# --- Test 9: the analyzer's handback acknowledgement is not an analysis ---
+# The analyzer stops twice: once with the report, once with a short ack after
+# handing back. Persisting the ack shadowed the real analysis, because
+# latestAnalysis() picks the newest file by name.
+sid9="persist-t9-$$"
+touch "$SESSIONS/pending-${sid9}"
+run_persist "$(jq -n --arg sid "$sid9" --arg msg "Report delivered." \
+  '{session_id:$sid, agent_type:"claude-watchdog:session-analyzer", last_assistant_message:$msg}')"
+if ls "$CLAUDE_WATCHDOG_ANALYSES_DIR"/${sid9}-*.md >/dev/null 2>&1; then
+  fail "handback-ack" "wrote a file for the handback acknowledgement"
+fi
+grep -q "SKIP: message is not an analysis" "$CLAUDE_WATCHDOG_LOG" \
+  || fail "handback-ack-log" "no skip log for the handback acknowledgement"
+# The hold must still release: the analyzer really has finished.
+[ ! -f "$SESSIONS/pending-${sid9}" ] || fail "handback-ack" "pending sentinel not removed"
+pass "handback-ack-not-persisted"
+
 echo "--- all persist tests passed ---"
