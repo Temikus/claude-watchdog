@@ -554,7 +554,9 @@ sid=$(new_sid)
 gate_run "$sid" "$sr_transcript" "$PROJ" ""
 assert_outcome "interactive-off" BLOCK
 assert_out "interactive-off" "Run the agent in the FOREGROUND"
-assert_out "interactive-off" "Present the analysis verbatim and in full"
+assert_out "interactive-off" "present the analysis verbatim and in full"
+assert_out "interactive-off" "✓ watchdog: no findings"
+assert_out "interactive-off" "after you have already replied"
 assert_out "interactive-off" "Do not act on any recommendation unless the user asks"
 refute_out "interactive-off" "AskUserQuestion"
 refute_out "interactive-off" "watchdog-todo.md"
@@ -563,10 +565,12 @@ pass "interactive-recommendations-off-by-default"
 sid=$(new_sid)
 gate_run "$sid" "$sr_transcript" "$PROJ" "" CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS=1
 assert_outcome "interactive-on" BLOCK
-# The foreground / verbatim / do-not-act rules hold on both branches; only the
+# The foreground / clean / verbatim / do-not-act rules hold on both branches; only the
 # follow-up differs.
 assert_out "interactive-on" "Run the agent in the FOREGROUND"
-assert_out "interactive-on" "Present the analysis verbatim and in full"
+assert_out "interactive-on" "present the analysis verbatim and in full"
+assert_out "interactive-on" "✓ watchdog: no findings"
+assert_out "interactive-on" "after you have already replied"
 assert_out "interactive-on" "AskUserQuestion"
 assert_out "interactive-on" "$PROJ/.claude/watchdog-todo.md"
 refute_out "interactive-on" "Do not act on any recommendation unless the user asks"

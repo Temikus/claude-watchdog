@@ -730,8 +730,12 @@ Use the Agent tool with:
 
 Both the `cwd` and the condensed path have `\n` stripped before interpolation.
 
-`postAnalysis` is `Present the analysis to the user, then stop.` by default. When
-`INTERACTIVE_RECS` is truthy it is instead the multi-paragraph
+`postAnalysis` always opens with the foreground rule, the clean rule (a clean
+analysis is answered with `✓ watchdog: no findings` instead of relayed), the
+verbatim rule for everything else, and the `✓` reply to a late finish notice;
+`tests/golden/stop.prompt.txt` holds the exact text. By default it then says
+not to act on any recommendation unless asked. When
+`INTERACTIVE_RECS` is truthy that last part is instead the multi-paragraph
 `AskUserQuestion` block that names the todo path `<cwd>/.claude/watchdog-todo.md`
 (also `\n`-stripped) and specifies the `## Rules to add` and `## Tasks` headings.
 **[UNTESTED]**

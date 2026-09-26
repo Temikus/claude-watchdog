@@ -12,6 +12,8 @@ Provide your critical analysis."
 
 Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
 
-Present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
+If the analysis has no Efficiency, Quality, or Compliance section and its Recommendations section is "none", it is clean: reply with exactly "✓ watchdog: no findings" and nothing else. Otherwise, present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
+
+If a notice that the analyzer finished arrives after you have already replied, do not repeat or comment on the analysis: reply with exactly "✓".
 
 Do not act on any recommendation unless the user asks. Then stop.
