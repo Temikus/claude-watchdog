@@ -607,16 +607,20 @@ try {
 
   // Backgrounding the analyzer produced a relay that compressed the review to a
   // third of its length, and twice skipped presenting it and acted on a finding
-  // instead. Both branches carry the same foreground/verbatim rule.
+  // instead. Both branches carry the same foreground/verbatim rule. A clean
+  // analysis is already persisted, so relaying it in full only adds noise; the
+  // second rule covers the extra wake-up a backgrounded analyzer causes.
   const foreground = `Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
 
-Present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.`;
+If the analysis has no Efficiency, Quality, or Compliance section and its Recommendations section is "none", it is clean: reply with exactly "✓ watchdog: no findings" and nothing else. Otherwise, present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
+
+If a notice that the analyzer finished arrives after you have already replied, do not repeat or comment on the analysis: reply with exactly "✓".`;
 
   let postAnalysis;
   if (isInteractive) {
     postAnalysis = `${foreground}
 
-Then, extract the recommendations from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
+If the analysis has recommendations, extract them from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
 - question: "Which recommendations would you like to address?"
 - header: "Actions"
 - multiSelect: true
