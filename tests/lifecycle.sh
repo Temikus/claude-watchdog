@@ -14,14 +14,6 @@ trap 'rm -rf "$TMPROOT"' EXIT
 LOGN=0
 new_log() { LOGN=$((LOGN + 1)); LOG="$TMPROOT/log.$LOGN"; }
 
-# set_mtime <path> <seconds-ago> - portable `touch -t`, GNU and BSD date.
-set_mtime() {
-  local path="$1" secs="$2" epoch stamp
-  epoch=$(( $(date +%s) - secs ))
-  stamp=$(date -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$epoch" +%Y%m%d%H%M.%S)
-  touch -t "$stamp" "$path"
-}
-
 # A fresh global tmp + analyses pair per case, so cleanup and cap assertions
 # only ever see what the case itself put there.
 CASEN=0

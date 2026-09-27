@@ -22,8 +22,18 @@ echo "$*" >> "$d/calls"
 if [ "$1 $2" = "pr view" ]; then
   name=pr
 elif [ "$1" = api ]; then
-  case "$2" in
-    */status) name=status ;;
+  path="" jqexpr=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --jq) jqexpr="$2"; shift ;;
+      -*) ;;
+      *) path="$1" ;;
+    esac
+    shift
+  done
+  case "$path" in
+    */status|*/status\?*) name=status ;;
     */check-runs*) name=check-runs ;;
     */pulls/*/reviews*) name=reviews ;;
     */pulls/*/comments*) name=pr-comments ;;
@@ -37,7 +47,7 @@ n=$(( $(cat "$d/count-$name" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$d/count-$name"
 f="$d/$name.$n.json"; [ -f "$f" ] || f="$d/$name.json"
 [ -f "$f" ] || { echo "no pull requests found" >&2; exit 1; }
-cat "$f"
+if [ -n "${jqexpr:-}" ]; then jq -c "$jqexpr" "$f"; else cat "$f"; fi
 EOF
 chmod +x "$FAKE_GH"
 
@@ -53,6 +63,7 @@ new_gh() {
   case_n=$((case_n + 1))
   GH_DIR="$TMPROOT/gh-$case_n"
   mkdir -p "$GH_DIR"
+  rm -f "$DATA"/sessions/await-* "$TMPROOT/.claude-watchdog-skip"
   jq -n --arg sha "$SHA" '{number:7, headRefOid:$sha, url:"https://github.com/o/r/pull/7", state:"OPEN", isDraft:false}' > "$GH_DIR/pr.json"
   echo '{"state":"success","statuses":[]}' > "$GH_DIR/status.json"
   echo '{"total_count":0,"check_runs":[]}' > "$GH_DIR/check-runs.json"
@@ -73,10 +84,10 @@ inline_comment() { # <login> <type> <created_at> <path> <line> <body>
       html_url:("https://github.com/o/r/pull/7#discussion_" + $p)}'
 }
 
-payload() { # <command>
+payload() { # <command> [duration_ms]
   event_fixture post-tool-use-bash \
-    "$(jq -n --arg sid "$SID" --arg cwd "$TMPROOT" --arg c "$1" \
-        '{session_id:$sid, cwd:$cwd, tool_input:{command:$c}}')"
+    "$(jq -n --arg sid "$SID" --arg cwd "$TMPROOT" --arg c "$1" --argjson d "${2:-0}" \
+        '{session_id:$sid, cwd:$cwd, tool_input:{command:$c}, duration_ms:$d}')"
 }
 
 # await <command> [ENV=VAL ...] - enabled, hermetic, and with no waiting.
@@ -88,7 +99,7 @@ await() {
     CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS=0 CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS=0 "$@"
 }
 
-watcher_file() { echo "$DATA/sessions/await-$SID-7"; }
+watcher_file() { echo "$DATA/sessions/await-$SID-o_r-7"; }
 silent() { # <name>
   [ "$AWAIT_RC" -eq 0 ] || fail "$1" "expected exit 0, got $AWAIT_RC (stderr: $AWAIT_ERR)"
   [ -z "$AWAIT_ERR" ] || fail "$1" "expected no wake text, got '$AWAIT_ERR'"
@@ -173,7 +184,8 @@ pass "failed-check-wakes"
 # --- Test 8: round cap stops a review/fix loop ---
 new_gh
 jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
-jq -n --arg sha "$SHA" '{sha:"0000000", pid:0, wakes:2}' > "$(watcher_file)"
+mkdir -p "$DATA/sessions"
+jq -n '{sha:"0000000", pid:0, wakes:2}' > "$(watcher_file)"
 await 'git push' CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS=2
 silent "round-cap"
 calls | grep -q '^api' && fail "round-cap" "polled past the cap"
@@ -183,6 +195,7 @@ rm -f "$(watcher_file)"
 
 # --- Test 9: a live watcher on the same head -> second trigger is a no-op ---
 new_gh
+mkdir -p "$DATA/sessions"
 jq -n --arg sha "$SHA" --argjson pid $$ '{sha:$sha, pid:$pid, wakes:0}' > "$(watcher_file)"
 await 'gh pr create --fill'
 silent "dedup"
@@ -231,5 +244,71 @@ silent "garbage-stdin"
 await 'git push' CLAUDE_WATCHDOG_GH="$TMPROOT/no-such-gh"
 silent "missing-gh"
 pass "fail-open"
+
+# --- Test 14: .claude-watchdog-skip in the session cwd disables the watcher ---
+new_gh
+touch "$TMPROOT/.claude-watchdog-skip"
+await 'git push'
+silent "skip-file"
+[ -z "$(calls)" ] || fail "skip-file" "gh was called: $(calls)"
+pass "skip-file-honoured"
+
+# --- Test 15: re-pushing a head whose round already concluded is a no-op ---
+new_gh
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
+await 'git push'
+[ "$AWAIT_RC" -eq 2 ] || fail "handled-head" "first round should wake, got $AWAIT_RC"
+: > "$GH_DIR/calls"
+await 'git push'
+silent "handled-head"
+calls | grep -q '^api' && fail "handled-head" "re-polled a handled head"
+[ "$(jq -r .wakes "$(watcher_file)")" = 1 ] || fail "handled-head" "wake count moved: $(cat "$(watcher_file)")"
+pass "handled-head-not-rewoken"
+
+# --- Test 16: state is per repo - another repo's PR #7 at the cap does not block this one ---
+new_gh
+mkdir -p "$DATA/sessions"
+jq -n '{sha:"0000000", pid:0, wakes:99}' > "$DATA/sessions/await-$SID-other_repo-7"
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
+await 'git push'
+[ "$AWAIT_RC" -eq 2 ] || fail "per-repo-state" "expected exit 2, got $AWAIT_RC"
+pass "per-repo-state"
+
+# --- Test 17: the cutoff covers the Bash call's own runtime (duration_ms) ---
+new_gh
+FIVE_MIN_AGO=$(date -u -r $(( $(date +%s) - 300 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @$(( $(date +%s) - 300 )) +%Y-%m-%dT%H:%M:%SZ)
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$FIVE_MIN_AGO" slow.go 3 'Posted while the command ran.') > "$GH_DIR/pr-comments.json"
+run_await "$(payload 'git push && sleep 600' 600000)" \
+  CLAUDE_WATCHDOG_AWAIT_REVIEWS=1 CLAUDE_WATCHDOG_GH="$FAKE_GH" FAKE_GH_DIR="$GH_DIR" \
+  CLAUDE_WATCHDOG_TMP="$DATA" CLAUDE_WATCHDOG_LOG="$LOG" \
+  CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS=0 CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS=0
+[ "$AWAIT_RC" -eq 2 ] || fail "duration-cutoff" "expected exit 2, got $AWAIT_RC"
+case "$AWAIT_ERR" in *"slow.go:3"*) ;; *) fail "duration-cutoff" "comment missing: '$AWAIT_ERR'" ;; esac
+pass "cutoff-covers-command-runtime"
+
+# --- Test 18: every GitHub list call follows pagination ---
+new_gh
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
+await 'git push'
+[ "$AWAIT_RC" -eq 2 ] || fail "paginate" "expected exit 2, got $AWAIT_RC"
+unpaged=$(grep '^api' "$GH_DIR/calls" | grep -v -- '--paginate' || true)
+[ -z "$unpaged" ] || fail "paginate" "unpaginated calls: $unpaged"
+pass "api-calls-paginate"
+
+# --- Test 19: a stale lock from a crashed hook is taken over, a live one is not ---
+new_gh
+mkdir -p "$DATA/sessions"
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
+touch "$(watcher_file).lock"; set_mtime "$(watcher_file).lock" 60
+await 'git push'
+[ "$AWAIT_RC" -eq 2 ] || fail "stale-lock" "expected exit 2, got $AWAIT_RC"
+[ ! -e "$(watcher_file).lock" ] || fail "stale-lock" "lock left behind"
+new_gh
+mkdir -p "$DATA/sessions"
+touch "$(watcher_file).lock"
+await 'git push'
+silent "live-lock"
+calls | grep -q '^api' && fail "live-lock" "polled without the lock"
+pass "lock-stale-takeover-and-live-wait"
 
 echo "All await-reviews tests passed."

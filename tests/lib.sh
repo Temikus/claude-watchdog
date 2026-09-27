@@ -117,6 +117,14 @@ outcome() {
   fi
 }
 
+# set_mtime <path> <seconds-ago> - portable `touch -t`, GNU and BSD date.
+set_mtime() {
+  local path="$1" secs="$2" epoch stamp
+  epoch=$(( $(date +%s) - secs ))
+  stamp=$(date -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$epoch" +%Y%m%d%H%M.%S)
+  touch -t "$stamp" "$path"
+}
+
 # --- payloads and transcripts ----------------------------------------------
 
 # event_fixture <name> [jq-object-fragment]

@@ -218,7 +218,8 @@ comments posted since the push. If there is anything, it wakes Claude with that 
 and asks it to address the feedback under your usual instructions. Otherwise it exits
 silently.
 
-- A newer push supersedes a running watcher, and a second trigger for the same head is a no-op.
+- A newer push supersedes a running watcher. A second trigger for a head that is being watched, or whose round already finished, is a no-op.
+- A `.claude-watchdog-skip` file in the session's working directory disables it, as it does the post-mortem.
 - It stops after 3 wake-ups per PR per session (`CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS`).
 - It needs an authenticated `gh` CLI. Every failure (no PR, no `gh`, API errors) exits silently.
 
