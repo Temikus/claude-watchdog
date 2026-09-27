@@ -43,6 +43,9 @@ const POLL_SECONDS = env('CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS', 30);
 // A bot may register its pending status a while after the push; an all-green
 // head inside this window is not yet trusted as settled.
 const GRACE_SECONDS = env('CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS', 90);
+// Bots flip their status to done before posting: CodeRabbit's review and
+// thread replies land up to ~60s after "Review completed".
+const QUIET_SECONDS = env('CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS', 90);
 const MAX_ROUNDS = env('CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS', 3);
 const ITEM_MAX_CHARS = 1500;
 const TOTAL_MAX_CHARS = 10000;
@@ -184,8 +187,11 @@ try {
     statuses = ghItems(`${api}/commits/${sha}/status?per_page=100`, '.statuses[]', cwd);
     checkRuns = ghItems(`${api}/commits/${sha}/check-runs?per_page=100`, '.check_runs[]', cwd);
     const pending = statuses.some(s => s.state === 'pending') || checkRuns.some(c => c.status !== 'completed');
+    const lastChangeMs = Math.max(0, ...[...statuses.map(s => s.updated_at), ...checkRuns.map(c => c.completed_at)]
+      .map(t => Date.parse(t ?? '')).filter(Number.isFinite));
     const elapsed = (Date.now() - startMs) / 1000;
-    if (!pending && elapsed >= GRACE_SECONDS) break;
+    const quiet = (Date.now() - lastChangeMs) / 1000 >= QUIET_SECONDS;
+    if (!pending && quiet && elapsed >= GRACE_SECONDS) break;
     if (elapsed + POLL_SECONDS > TIMEOUT_SECONDS) {
       log(`TIMEOUT: PR #${pr.number}@${sha.slice(0, 7)} still pending after ${Math.floor(elapsed)}s`);
       process.exit(0);

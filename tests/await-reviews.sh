@@ -96,7 +96,8 @@ await() {
   run_await "$(payload "$cmd")" \
     CLAUDE_WATCHDOG_AWAIT_REVIEWS=1 CLAUDE_WATCHDOG_GH="$FAKE_GH" FAKE_GH_DIR="$GH_DIR" \
     CLAUDE_WATCHDOG_TMP="$DATA" CLAUDE_WATCHDOG_LOG="$LOG" \
-    CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS=0 CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS=0 "$@"
+    CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS=0 CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS=0 \
+    CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS=0 "$@"
 }
 
 watcher_file() { echo "$DATA/sessions/await-$SID-o_r-7"; }
@@ -310,5 +311,21 @@ await 'git push'
 silent "live-lock"
 calls | grep -q '^api' && fail "live-lock" "polled without the lock"
 pass "lock-stale-takeover-and-live-wait"
+
+# --- Test 20: a status that just completed is not settled until it has been quiet ---
+# CodeRabbit flips its status to "Review completed" ~40s before the review lands.
+new_gh
+jq -n --arg c "$NOW" '{state:"success", statuses:[{context:"CodeRabbit", state:"success", updated_at:$c}]}' > "$GH_DIR/status.json"
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
+: > "$LOG"
+await 'git push' CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS=300 CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS=1 CLAUDE_WATCHDOG_AWAIT_TIMEOUT_SECONDS=1
+silent "quiet-period"
+grep -q 'TIMEOUT' "$LOG" || fail "quiet-period" "settled inside the quiet period"
+new_gh
+jq -n --arg c "$OLD" '{state:"success", statuses:[{context:"CodeRabbit", state:"success", updated_at:$c}]}' > "$GH_DIR/status.json"
+jq -s . <(inline_comment 'coderabbitai[bot]' Bot "$NOW" a.go 1 'nit') > "$GH_DIR/pr-comments.json"
+await 'git push' CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS=300
+[ "$AWAIT_RC" -eq 2 ] || fail "quiet-period" "old completion should settle, got $AWAIT_RC"
+pass "quiet-period-after-last-completion"
 
 echo "All await-reviews tests passed."

@@ -152,6 +152,7 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_AWAIT_TIMEOUT_SECONDS` | `1200` | Give up waiting for checks to settle after this long (must stay under the hook's 1800 s timeout) |
 | `CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS` | `30` | Interval between GitHub status polls |
 | `CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS` | `90` | Minimum wait after a push before an all-green head counts as settled, so a bot that registers its status late is not missed |
+| `CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS` | `90` | Minimum time since the last status or check changed before the head counts as settled, since bots flip their status to done before posting the review |
 | `CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS` | `3` | Maximum wake-ups per PR per session, so a review/fix loop cannot run forever |
 | `CLAUDE_WATCHDOG_GH` | `gh` | `gh` binary the await hook calls |
 
@@ -213,7 +214,7 @@ has ended its turn, so the feedback sits there until you ask Claude to look.
 With **Wake on bot reviews and CI** enabled, a background (`asyncRewake`) `PostToolUse`
 hook runs after any `Bash` call containing `git push` or `gh pr create`. If the branch
 has an open PR, it polls the head commit's statuses and check runs until none is
-pending, then collects failed checks plus bot (`user.type == "Bot"`) reviews and
+pending and none has changed for 90 s, then collects failed checks plus bot (`user.type == "Bot"`) reviews and
 comments posted since the push. If there is anything, it wakes Claude with that list
 and asks it to address the feedback under your usual instructions. Otherwise it exits
 silently.
