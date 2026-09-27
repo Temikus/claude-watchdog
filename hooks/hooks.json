@@ -48,6 +48,19 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/await-reviews.mjs",
+            "asyncRewake": true,
+            "timeout": 1800
+          }
+        ]
+      }
     ]
   }
 }

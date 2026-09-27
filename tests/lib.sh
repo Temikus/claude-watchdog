@@ -28,6 +28,7 @@ done < <(env)
 : "${HOOK_HOLD:=node hooks/hold-input.mjs}"
 : "${HOOK_PERSIST:=node hooks/persist-analysis.mjs}"
 : "${HOOK_ENFORCE:=node hooks/enforce-subagent-model.mjs}"
+: "${HOOK_AWAIT:=node hooks/await-reviews.mjs}"
 # Debug CLI: `<binary> condense <jsonl> [bytes]` / `<binary> extract <jsonl>`.
 # See tests/CONDENSE-CLI.md - this is a supported interface, not an internal.
 : "${HOOK_CONDENSE:=node hooks/condense.mjs}"
@@ -37,6 +38,7 @@ read -r -a HOOK_HOLD_CMD <<< "$HOOK_HOLD"
 read -r -a HOOK_PERSIST_CMD <<< "$HOOK_PERSIST"
 read -r -a HOOK_CONDENSE_CMD <<< "$HOOK_CONDENSE"
 read -r -a HOOK_ENFORCE_CMD <<< "$HOOK_ENFORCE"
+read -r -a HOOK_AWAIT_CMD <<< "$HOOK_AWAIT"
 
 FIXTURE="${FIXTURE:-tests/fixtures/midturn-session.jsonl}"
 
@@ -88,6 +90,19 @@ run_enforce() {
   rm -f "$errfile"
 }
 
+# asyncRewake protocol: exit 2 wakes the model with the output; exit 0 is silent.
+AWAIT_OUT=""; AWAIT_ERR=""; AWAIT_RC=0
+run_await() {
+  local payload="$1"; shift
+  local errfile; errfile=$(mktemp)
+  AWAIT_RC=0
+  # shellcheck disable=SC2034  # read by the sourcing test scripts
+  AWAIT_OUT=$(printf '%s' "$payload" | env ${1+"$@"} "${HOOK_AWAIT_CMD[@]}" 2>"$errfile") || AWAIT_RC=$?
+  # shellcheck disable=SC2034  # read by the sourcing test scripts
+  AWAIT_ERR=$(cat "$errfile")
+  rm -f "$errfile"
+}
+
 # Classify a Stop-hook result by its wire protocol: "analyze this session" is a
 # JSON `decision:block` on stdout with exit 0 (BLOCK); any other clean exit is a
 # skip (SKIP); a non-zero exit surfaces as ERR:<code>.
@@ -100,6 +115,14 @@ outcome() {
   else
     echo SKIP
   fi
+}
+
+# set_mtime <path> <seconds-ago> - portable `touch -t`, GNU and BSD date.
+set_mtime() {
+  local path="$1" secs="$2" epoch stamp
+  epoch=$(( $(date +%s) - secs ))
+  stamp=$(date -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$epoch" +%Y%m%d%H%M.%S)
+  touch -t "$stamp" "$path"
 }
 
 # --- payloads and transcripts ----------------------------------------------

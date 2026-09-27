@@ -63,6 +63,7 @@ Run a short session and end Claude's turn. You should see output like:
 | SubagentStop hook | `hooks/persist-analysis.mjs` | Persists the analyzer's output to disk and echoes the save path |
 | UserPromptSubmit hook | `hooks/hold-input.mjs` | Optionally holds new prompts while an analysis is in flight |
 | PreToolUse hook | `hooks/enforce-subagent-model.mjs` | Optionally blocks a `Task`/`Agent` dispatch that ignores an agent's pinned model |
+| PostToolUse hook | `hooks/await-reviews.mjs` | Optionally waits for bot reviews and CI after a push, then wakes Claude with the results |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
 | Slash command | `skills/analyze-session/SKILL.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
@@ -112,6 +113,7 @@ with `/plugin configure claude-watchdog`:
 | Pass instruction files to the analyzer | `true` | Point the analyzer at `CLAUDE.md` and `.claude/rules/**/*.md` (project first, then `~/.claude`; rule directories are searched recursively, up to 3 levels deep) so it can check the session against your own instructions. A file over 8 KB is passed as a truncated head - the first 8 KB, copied into the sessions dir as `rules-<session-id>-<n>-<name>` - rather than skipped; each file counts at most 8 KB toward the 16 KB total cap |
 | Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
 | Enforce pinned subagent models | `false` | Block a `Task`/`Agent` dispatch that names an agent whose definition pins a `model:` but passes no explicit `model` |
+| Wake on bot reviews and CI | `false` | After a `git push` / `gh pr create` on a branch with an open PR, wake Claude once checks settle with failures and new bot comments (see below) |
 
 ### Environment variable overrides
 
@@ -128,6 +130,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `1` | Set to `0` to analyze even while background tasks (subagents, shell jobs, workflows) are still in flight. **This flag also gates the session-cron dedup guard** (see below), so setting it to `0` re-enables analysis in both cases |
 | `CLAUDE_WATCHDOG_HOLD_INPUT` | `0` | Set to `1` to hold newly submitted prompts while an analysis is in flight (see below) |
 | `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `0` | Set to `1` to block a `Task`/`Agent` dispatch that ignores an agent's pinned model (see below) |
+| `CLAUDE_WATCHDOG_AWAIT_REVIEWS` | `0` | Set to `1` to wake Claude when bot reviews and CI settle after a push (see below) |
 
 ### Advanced overrides
 
@@ -146,6 +149,12 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `1` | Set to `0` to store session files in the global plugin data path instead of the project directory |
 | `CLAUDE_WATCHDOG_HOLD_TTL_SECONDS` | `240` | How long the input hold blocks prompts before auto-releasing |
 | `CLAUDE_WATCHDOG_LEGACY_HOOK` | `false` | Set to `true` to emit the analyzer instruction on stderr with exit code `2` instead of the default stdout JSON `decision: block` |
+| `CLAUDE_WATCHDOG_AWAIT_TIMEOUT_SECONDS` | `1200` | Give up waiting for checks to settle after this long (must stay under the hook's 1800 s timeout) |
+| `CLAUDE_WATCHDOG_AWAIT_POLL_SECONDS` | `30` | Interval between GitHub status polls |
+| `CLAUDE_WATCHDOG_AWAIT_GRACE_SECONDS` | `90` | Minimum wait after a push before an all-green head counts as settled, so a bot that registers its status late is not missed |
+| `CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS` | `90` | Minimum time since the last status or check changed before the head counts as settled, since bots flip their status to done before posting the review |
+| `CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS` | `3` | Maximum wake-ups per PR per session, so a review/fix loop cannot run forever |
+| `CLAUDE_WATCHDOG_GH` | `gh` | `gh` binary the await hook calls |
 
 ### Holding input during analysis
 
@@ -196,6 +205,24 @@ That denies (or allows) a specific model *value* and complements this hook, whic
 blocks a *missing* model - the native syntax cannot express "parameter absent". The
 hook is a no-op when `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set, since that overrides
 every per-spawn and definition model anyway.
+
+### Waking on bot reviews and CI
+
+Review bots such as CodeRabbit post a few minutes after a push, usually after Claude
+has ended its turn, so the feedback sits there until you ask Claude to look.
+
+With **Wake on bot reviews and CI** enabled, a background (`asyncRewake`) `PostToolUse`
+hook runs after any `Bash` call containing `git push` or `gh pr create`. If the branch
+has an open PR, it polls the head commit's statuses and check runs until none is
+pending and none has changed for 90 s, then collects failed checks plus bot (`user.type == "Bot"`) reviews and
+comments posted since the push. If there is anything, it wakes Claude with that list
+and asks it to address the feedback under your usual instructions. Otherwise it exits
+silently.
+
+- A newer push supersedes a running watcher. A second trigger for a head that is being watched, or whose round already finished, is a no-op.
+- A `.claude-watchdog-skip` file in the session's working directory disables it, as it does the post-mortem.
+- It stops after 3 wake-ups per PR per session (`CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS`).
+- It needs an authenticated `gh` CLI. Every failure (no PR, no `gh`, API errors) exits silently.
 
 You can also create a `.claude-watchdog-skip` file to disable the hook for a project. The hook looks for it in the session's working directory, so put it at the directory you start Claude Code from:
 
