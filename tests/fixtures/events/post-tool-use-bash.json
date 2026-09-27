@@ -1,0 +1,29 @@
+{
+  "_fixture": {
+    "status": "captured",
+    "source": "Captured from a real session (asyncRewake spike), macOS, Claude Code 2.1.281 (Claude Code)",
+    "note": "Sanitised with just fixture-sanitise. cwd rewritten to /repo; the capture ran in a scratch dir.",
+    "claude_code_version": "2.1.281 (Claude Code)"
+  },
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/example/.claude/projects/-private-tmp-claude-501--Users-example-Library-Mobile-Documents-com-apple-CloudDocs-Code-claude-watchdog-00000000-0000-4000-8000-000000000002-scratchpad-spike/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "scratchpad_dir": "/private/tmp/claude-501/-private-tmp-claude-501--Users-example-Library-Mobile-Documents-com-apple-CloudDocs-Code-claude-watchdog-00000000-0000-4000-8000-000000000002-scratchpad-spike/00000000-0000-4000-8000-000000000001/scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000003",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo hi,",
+    "description": "Echo a greeting"
+  },
+  "tool_response": {
+    "stdout": "hi,",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_01XJredfPTxhuqddehBQwL2M",
+  "duration_ms": 381
+}

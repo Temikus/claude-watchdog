@@ -27,7 +27,7 @@ lint:
 
 # The suite lives in tests/*.sh; these recipes are thin wrappers so `just test`
 # and `just test-<name>` keep working. Point HOOK_STOP / HOOK_HOLD /
-# HOOK_PERSIST / HOOK_CONDENSE at another implementation to run the same suite
+# HOOK_PERSIST / HOOK_CONDENSE / HOOK_AWAIT at another implementation to run the same suite
 # against it - see tests/lib.sh.
 
 # Smoke-test the Stop hook with a synthetic Stop event
@@ -57,6 +57,10 @@ test-agent-prompt:
 # PreToolUse pinned-subagent-model hook
 test-enforce-model:
     bash tests/enforce-model.sh
+
+# PostToolUse await-bot-reviews hook
+test-await-reviews:
+    bash tests/await-reviews.sh
 
 # Perf budgets (not part of `just test`)
 test-perf:
@@ -104,7 +108,7 @@ test-lifecycle:
 # --- end rewrite/coverage-config --------------------------------------------
 
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-enforce-model test-gates test-fixtures test-golden test-config test-lifecycle
+test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-enforce-model test-await-reviews test-gates test-fixtures test-golden test-config test-lifecycle
 
 # Lint + all tests
 check: lint test

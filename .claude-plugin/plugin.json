@@ -86,6 +86,12 @@
       "title": "Enforce pinned subagent models",
       "description": "Block a Task/Agent dispatch that names an agent whose definition pins a 'model:' but does not pass an explicit 'model'. Re-dispatching with any explicit model passes. Default is false",
       "default": false
+    },
+    "await_bot_reviews": {
+      "type": "boolean",
+      "title": "Wake on bot reviews and CI",
+      "description": "After Claude runs git push or gh pr create on a branch with an open PR, wait in the background until every status and check on the head settles, then wake Claude with failed checks and new bot review comments. Needs an authenticated gh CLI. At most 3 wake-ups per PR per session. Default is false",
+      "default": false
     }
   }
 }

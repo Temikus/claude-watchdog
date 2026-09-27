@@ -28,6 +28,7 @@ done < <(env)
 : "${HOOK_HOLD:=node hooks/hold-input.mjs}"
 : "${HOOK_PERSIST:=node hooks/persist-analysis.mjs}"
 : "${HOOK_ENFORCE:=node hooks/enforce-subagent-model.mjs}"
+: "${HOOK_AWAIT:=node hooks/await-reviews.mjs}"
 # Debug CLI: `<binary> condense <jsonl> [bytes]` / `<binary> extract <jsonl>`.
 # See tests/CONDENSE-CLI.md - this is a supported interface, not an internal.
 : "${HOOK_CONDENSE:=node hooks/condense.mjs}"
@@ -37,6 +38,7 @@ read -r -a HOOK_HOLD_CMD <<< "$HOOK_HOLD"
 read -r -a HOOK_PERSIST_CMD <<< "$HOOK_PERSIST"
 read -r -a HOOK_CONDENSE_CMD <<< "$HOOK_CONDENSE"
 read -r -a HOOK_ENFORCE_CMD <<< "$HOOK_ENFORCE"
+read -r -a HOOK_AWAIT_CMD <<< "$HOOK_AWAIT"
 
 FIXTURE="${FIXTURE:-tests/fixtures/midturn-session.jsonl}"
 
@@ -85,6 +87,19 @@ run_enforce() {
   ENFORCE_OUT=$(printf '%s' "$payload" | env ${1+"$@"} "${HOOK_ENFORCE_CMD[@]}" 2>"$errfile") || ENFORCE_RC=$?
   # shellcheck disable=SC2034  # read by the sourcing test scripts
   ENFORCE_ERR=$(cat "$errfile")
+  rm -f "$errfile"
+}
+
+# asyncRewake protocol: exit 2 wakes the model with the output; exit 0 is silent.
+AWAIT_OUT=""; AWAIT_ERR=""; AWAIT_RC=0
+run_await() {
+  local payload="$1"; shift
+  local errfile; errfile=$(mktemp)
+  AWAIT_RC=0
+  # shellcheck disable=SC2034  # read by the sourcing test scripts
+  AWAIT_OUT=$(printf '%s' "$payload" | env ${1+"$@"} "${HOOK_AWAIT_CMD[@]}" 2>"$errfile") || AWAIT_RC=$?
+  # shellcheck disable=SC2034  # read by the sourcing test scripts
+  AWAIT_ERR=$(cat "$errfile")
   rm -f "$errfile"
 }
 
