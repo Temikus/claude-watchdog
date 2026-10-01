@@ -185,6 +185,31 @@ function parseLines(lines) {
   return out;
 }
 
+// The analyzer runs on another model and receives its own attribution reminder,
+// while the session's sits near the transcript head and is usually truncated
+// away. Scan the full transcript from the end for the session's latest values.
+function sessionAttribution(lines) {
+  let model = null, trailer = null, apiModel = null;
+  for (let i = lines.length - 1; i >= 0 && !(model && trailer); i--) {
+    const line = lines[i];
+    const wanted = (!model && line.includes('"type":"model"'))
+      || (!trailer && line.includes('"commit":'))
+      || (!apiModel && line.includes('"type":"assistant"'));
+    if (!wanted) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    const att = obj.type === 'attachment' ? obj.attachment : null;
+    if (!model && att?.type === 'model' && att.identity?.marketingName) model = att.identity.marketingName;
+    if (!trailer && typeof att?.commit === 'string') trailer = att.commit.split('\n')[0].trim() || null;
+    const m = obj.type === 'assistant' ? obj.message?.model : null;
+    if (!apiModel && m && m !== '<synthetic>') apiModel = m;
+  }
+  const parts = [];
+  if (model || apiModel) parts.push(`model ${model ?? apiModel}`);
+  if (trailer) parts.push(`commit trailer ${trailer}`);
+  return parts.length ? `Session attribution: ${parts.join(', ')}` : null;
+}
+
 // Top-level user message: string content, or a text block with no tool_result.
 function isUserMessage(obj) {
   if (obj.type !== 'user') return false;
@@ -667,6 +692,8 @@ Do not act on any recommendation unless the user asks. Then stop.`;
   if (stats.external.length) {
     promptLines.push(`Files touched outside the project root (not part of the slice diff): ${stats.external.join(', ')}`);
   }
+  const attribution = sessionAttribution(allLines);
+  if (attribution) promptLines.push(attribution.replace(/\n/g, ''));
   if (prevAnalysis) promptLines.push(`Previous analysis (optional context, read only if useful): ${prevAnalysis.replace(/\n/g, '')}`);
   if (rules.length) promptLines.push(`User instruction files (read only when a compliance question actually arises): ${rules.join(', ')}`);
   promptLines.push('Provide your critical analysis.');
