@@ -108,4 +108,34 @@ else
   echo "FAIL: agent and skill Output section structure has drifted" >&2; rc=1
 fi
 
+# --- The spawn prompt must name the session's model and trailer ---
+# The analyzer runs on a different model and gets its own attribution reminder;
+# without the session's, it flagged a correct Opus trailer as wrong.
+TRAILER='Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>'
+sid4="attribution-$$"
+tp4="$TMPROOT/attribution.jsonl"
+{
+  jq -nc '{type:"attachment",attachment:{type:"model",identity:{modelId:"claude-opus-5-5[1m]",marketingName:"Opus 5.5 (1M context)"}}}'
+  jq -nc --arg c "$TRAILER"$'\nClaude-Session: https://claude.ai/code/session_x' '{type:"attachment",attachment:{type:"remote_session_change",commit:$c}}'
+} > "$tp4"
+mk_transcript "$TMPROOT/rounds.jsonl" 1 4 attr
+cat "$TMPROOT/rounds.jsonl" >> "$tp4"
+run_hook "$sid4" "$(stop_payload "$sid4" "$tp4" "$cwd")" > /dev/null
+reason=$(printf '%s' "$STOP_OUT" | jq -r '.reason // empty')
+if echo "$reason" | grep -qF "Session attribution: model Opus 5.5 (1M context), commit trailer $TRAILER"; then
+  echo "PASS: spawn prompt carries the session's model and trailer"
+else
+  echo "$reason" | grep -i attribution >&2 || true
+  echo "FAIL: spawn prompt lacks the session attribution line" >&2; rc=1
+fi
+check_rule_present "$prompt" "Session attribution:" "the session-attribution input"
+
+sid5="attribution-none-$$"
+run_hook "$sid5" "$(stop_payload "$sid5" "$TMPROOT/rounds.jsonl" "$cwd")" > /dev/null
+if printf '%s' "$STOP_OUT" | jq -r '.reason // empty' | grep -qF 'Session attribution'; then
+  echo "FAIL: attribution line emitted with nothing to report" >&2; rc=1
+else
+  echo "PASS: no attribution line when the transcript names no model"
+fi
+
 exit $rc
