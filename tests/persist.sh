@@ -140,6 +140,12 @@ out=$(session_files "$sid11")
 grep -q "Final report." "$out" || fail "text-then-handback" "file does not hold the handback"
 pass "text-then-handback-replaces-draft"
 
+# --- Test 11b: a repeated stop after the draft was replaced does not duplicate ---
+sleep 1  # a new file would get a distinct timestamped name
+run_persist "$(stop_payload "$sid11" "" "$tp11")"
+[ "$(session_files "$sid11" | wc -l)" -eq 1 ] || fail "handback-replay" "repeated stop wrote a second file"
+pass "handback-replay-not-duplicated"
+
 # --- Test 12: text turn then an identical handback does not duplicate ---
 sid12="persist-t12-$$"
 tp12="$TMPROOT/agent-t12.jsonl"

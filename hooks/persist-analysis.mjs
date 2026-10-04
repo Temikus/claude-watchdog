@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
-  statSync, unlinkSync, chmodSync
+  statSync, unlinkSync, chmodSync, renameSync
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -94,17 +94,27 @@ try {
   }
 
   // A text turn saved by an earlier stop is replaced in place, so the caller's
-  // version wins without leaving a second file for the same run.
-  const draftFile = draft && readdirSync(ANALYSES_DIR)
+  // version wins without leaving a second file for the same run. A file that
+  // already holds the handback is reused, so a repeated stop adds nothing.
+  const sessionFiles = readdirSync(ANALYSES_DIR)
     .filter(f => f.startsWith(`${sessionId}-`) && f.endsWith('.md'))
-    .map(f => join(ANALYSES_DIR, f))
-    .find(f => readFileSync(f, 'utf8') === draft + '\n');
+    .map(f => join(ANALYSES_DIR, f));
+  const holds = text => f => { try { return readFileSync(f, 'utf8') === text + '\n'; } catch { return false; } };
+  const draftFile = draft && sessionFiles.find(holds(draft));
+  const existingFile = draftFile || sessionFiles.find(holds(message));
   const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const outputFile = draftFile || join(ANALYSES_DIR, `${sessionId}-${ts}.md`);
-  writeFileSync(outputFile, message + '\n');
+  const outputFile = existingFile || join(ANALYSES_DIR, `${sessionId}-${ts}.md`);
+  // Rename is atomic, so an interrupted write never truncates a saved draft.
+  const tmp = `${outputFile}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, message + '\n');
+    renameSync(tmp, outputFile);
+  } finally {
+    try { unlinkSync(tmp); } catch { /* renamed */ }
+  }
 
   const size = Buffer.byteLength(message + '\n', 'utf8');
-  log(`${draftFile ? 'REPLACED' : 'WROTE'}: ${outputFile} (${size} bytes)`);
+  log(`${existingFile ? 'REPLACED' : 'WROTE'}: ${outputFile} (${size} bytes)`);
   console.log(`Analysis saved to: ${outputFile}`);
 
   const files = readdirSync(ANALYSES_DIR)
