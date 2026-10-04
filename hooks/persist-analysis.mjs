@@ -97,7 +97,7 @@ try {
   // version wins without leaving a second file for the same run. A file that
   // already holds the handback is reused, so a repeated stop adds nothing.
   const sessionFiles = readdirSync(ANALYSES_DIR)
-    .filter(f => f.startsWith(`${sessionId}-`) && f.endsWith('.md'))
+    .filter(f => f.startsWith(`${sessionId}-`) && /^\d{8}T\d{6}Z\.md$/.test(f.slice(sessionId.length + 1)))
     .map(f => join(ANALYSES_DIR, f));
   const holds = text => f => { try { return readFileSync(f, 'utf8') === text + '\n'; } catch { return false; } };
   const draftFile = draft && sessionFiles.find(holds(draft));

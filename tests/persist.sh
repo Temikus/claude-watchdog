@@ -156,6 +156,17 @@ run_persist "$(stop_payload "$sid12" "" "$tp12")"
 [ "$(session_files "$sid12" | wc -l)" -eq 1 ] || fail "identical-handback" "expected exactly one file"
 pass "identical-handback-not-duplicated"
 
+# --- Test 12b: a draft match only counts in this session's own files ---
+# Session "x" must not overwrite "x-other-<ts>.md" just because the name starts with "x-".
+sid12b="persist-t12b-$$"
+other="$CLAUDE_WATCHDOG_ANALYSES_DIR/${sid12b}-other-20260101T000000Z.md"
+printf '%s\n' $'### Goals\nShared draft.' > "$other"
+tp12b="$TMPROOT/agent-t12b.jsonl"
+{ text_line $'### Goals\nShared draft.'; handback_line $'### Goals\nMine.'; } > "$tp12b"
+run_persist "$(stop_payload "$sid12b" "" "$tp12b")"
+grep -q "Shared draft." "$other" || fail "draft-prefix" "overwrote another session's file"
+pass "draft-match-scoped-to-session"
+
 # --- Test 13: empty message and no handback in the transcript still skips ---
 sid13="persist-t13-$$"
 tp13="$TMPROOT/agent-t13.jsonl"
