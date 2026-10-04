@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
-  statSync, unlinkSync, rmdirSync, existsSync, chmodSync
+  statSync, unlinkSync, rmdirSync, existsSync, chmodSync, utimesSync
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
@@ -55,12 +55,14 @@ function log(msg) {
   appendFileSync(LOG_FILE, `[${ts}] ${msg}\n`);
 }
 
+// Trim to 80% of the cap, not to the cap itself. Trimming to exactly MAX_LINES left
+// every later run one line over it, so each run rewrote the whole log.
 function rotateLog() {
   try {
     const content = readFileSync(LOG_FILE, 'utf8');
     const lines = content.split('\n');
     if (lines.length > MAX_LINES) {
-      const kept = lines.slice(-MAX_LINES).join('\n');
+      const kept = lines.slice(-Math.floor(MAX_LINES * 0.8)).join('\n');
       writeFileSync(LOG_FILE, kept.endsWith('\n') ? kept : kept + '\n');
       log(`LOG ROTATED (was ${lines.length} lines)`);
     }
@@ -200,13 +202,15 @@ function sessionAttribution(lines) {
     try { obj = JSON.parse(line); } catch { continue; }
     const att = obj.type === 'attachment' ? obj.attachment : null;
     if (!model && att?.type === 'model' && att.identity?.marketingName) model = att.identity.marketingName;
-    if (!trailer && typeof att?.commit === 'string') trailer = att.commit.split('\n')[0].trim() || null;
+    if (!trailer && typeof att?.commit === 'string') {
+      trailer = att.commit.split('\n').map(l => l.trim()).filter(Boolean).join('; ') || null;
+    }
     const m = obj.type === 'assistant' ? obj.message?.model : null;
     if (!apiModel && m && m !== '<synthetic>') apiModel = m;
   }
   const parts = [];
   if (model || apiModel) parts.push(`model ${model ?? apiModel}`);
-  if (trailer) parts.push(`commit trailer ${trailer}`);
+  if (trailer) parts.push(`commit trailer lines: ${trailer}`);
   return parts.length ? `Session attribution: ${parts.join(', ')}` : null;
 }
 
@@ -307,13 +311,14 @@ function instructionFiles(rootDir, outDir, sessionId) {
   const home = homedir();
   candidates.push(join(home, '.claude/CLAUDE.md'), ...rulesIn(join(home, '.claude/rules')));
   const out = [];
+  const capped = [];
   let total = 0;
   let copies = 0;
   for (const f of candidates) {
     let size;
     try { size = statSync(f).size; } catch { continue; }
     const take = Math.min(size, RULES_HEAD_BYTES);
-    if (total + take > RULES_TOTAL_BYTES) { log(`RULES: skipped ${f} (${size}B, total cap)`); continue; }
+    if (total + take > RULES_TOTAL_BYTES) { capped.push(`${f} (${size}B)`); continue; }
     if (size > RULES_HEAD_BYTES) {
       const base = parsePath(f).base.replace(/[^A-Za-z0-9._-]/g, '_');
       const copy = join(outDir, `rules-${sessionId}-${++copies}-${base}`);
@@ -332,6 +337,7 @@ function instructionFiles(rootDir, outDir, sessionId) {
     total += take;
     out.push(f);
   }
+  if (capped.length) log(`RULES: total cap skipped ${capped.length} file(s): ${capped.join(', ')}`);
   return out;
 }
 
@@ -489,8 +495,11 @@ try {
     }
   }
 
-  const MARKER = join(SESSIONS_DIR, sessionId);
-  const CURSOR_FILE = join(SESSIONS_DIR, `cursor-${sessionId}.txt`);
+  // The cursor and the lock are per session, not per project root. A session that
+  // moves into a git worktree gets a new root (the worktree's own .git file), and
+  // keeping them under that root lost the cursor and re-analysed the whole session.
+  const MARKER = join(GLOBAL_SESSIONS_DIR, sessionId);
+  const CURSOR_FILE = join(GLOBAL_SESSIONS_DIR, `cursor-${sessionId}.txt`);
   const DELTA_FILE = join(SESSIONS_DIR, `delta-${sessionId}.tmp`);
 
   try {
@@ -504,6 +513,19 @@ try {
   }
   markerDir = MARKER;
   deltaFile = DELTA_FILE;
+
+  // Adopt a cursor written by a version that kept it in project-local storage.
+  // The cooldown reads the cursor's mtime, so the copy keeps it.
+  const legacyCursor = join(SESSIONS_DIR, `cursor-${sessionId}.txt`);
+  if (legacyCursor !== CURSOR_FILE && !existsSync(CURSOR_FILE) && existsSync(legacyCursor)) {
+    try {
+      const { atime, mtime } = statSync(legacyCursor);
+      writeFileSync(CURSOR_FILE, readFileSync(legacyCursor));
+      utimesSync(CURSOR_FILE, atime, mtime);
+      unlinkSync(legacyCursor);
+      log(`CURSOR: adopted project-local cursor ${legacyCursor}`);
+    } catch { /* unreadable: start a fresh slice */ }
+  }
 
   if (!transcriptPath || !existsSync(transcriptPath)) {
     log(`SKIP: transcript not found at '${transcriptPath}'`);

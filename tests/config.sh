@@ -277,7 +277,8 @@ for d in "$PERM_PROJ/.claude" "$PERM_PROJ/.claude/tmp" "$PERM_PROJ/.claude/tmp/c
   m=$(mode_of "$d")
   [ "$m" = "700" ] || fail "perm-local-dir" "$d is $m, expected 700"
 done
-for f in "$LOCAL_SESSIONS/condensed-${sid}.txt" "$LOCAL_SESSIONS/cursor-${sid}.txt"; do
+# The cursor is per session, so it stays in global storage even in local mode.
+for f in "$LOCAL_SESSIONS/condensed-${sid}.txt" "$TMPROOT/perm-gtmp2/sessions/cursor-${sid}.txt"; do
   m=$(mode_of "$f")
   [ "$m" = "600" ] || fail "perm-local-file" "$f is $m, expected 600"
 done

@@ -23,7 +23,7 @@ avoid repeating.
 ## Workflow
 1. Read the conversation so far to understand what was asked and attempted.
 2. If the project has instruction files (`CLAUDE.md`, `.claude/rules/*.md`, project first, then `~/.claude`), read them. They are the reference for Compliance.
-3. Run `git diff --stat` and `git diff --cached --stat`, then read full hunks for the files the session actually touched: `git diff -- <paths>`. Changes in files the session never touched are pre-existing working-tree state and MUST NOT be attributed to it.
+3. Run `git diff --stat` and `git diff --cached --stat`, then read full hunks for the files the session actually touched: `git diff -- <paths>`, plus `git show <sha> -- <paths>` for commits the session made. A `--stat` alone never supports a Quality judgement. Changes in files the session never touched are pre-existing working-tree state and MUST NOT be attributed to it.
 4. Run `git log --oneline -5`.
 5. Cross-reference the asks against the diff.
 
@@ -42,6 +42,8 @@ Signal threshold: a finding must have caused a wrong result, wasted a meaningful
 - Compliance: instructions ignored, trade-offs not flagged, user concerns handwaved, agreed too easily. Re-check messages the user sent mid-turn while Claude was working before calling anything unrequested - that is where corrections and extra asks arrive.
 
 Every finding is three sentences: the claim, the evidence (cite a message or a diff file path), the consequence.
+
+Check-it-or-drop-it rule: never report a finding you did not check yourself. If confirming it needs a `git show` or a file read, run that before you write the finding. If you cannot confirm it, drop it. Never write "I did not check" or "low confidence" next to a finding.
 
 Verification rule: before calling output hallucinated or unverified, look for tool calls that would have verified it (WebSearch, WebFetch, test runs, git show) **and** check that they came back without an error. A call that failed or was refused verifies nothing. If a successful call is found, say "verified via X" and drop the finding. If not, say "no verification visible", never assert fabrication.
 
