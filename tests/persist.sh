@@ -102,4 +102,62 @@ grep -q "SKIP: message is not an analysis" "$CLAUDE_WATCHDOG_LOG" \
 [ ! -f "$SESSIONS/pending-${sid9}" ] || fail "handback-ack" "pending sentinel not removed"
 pass "handback-ack-not-persisted"
 
+# Subagent transcript lines in the shape Claude Code writes them.
+text_line() {
+  jq -nc --arg t "$1" '{type:"assistant", message:{role:"assistant", content:[{type:"text", text:$t}]}}'
+}
+handback_line() {
+  jq -nc --arg m "$1" '{type:"assistant", message:{role:"assistant", content:[{type:"tool_use", id:"toolu_1", name:"SubagentHandback", input:{message:$m}}]}}'
+}
+stop_payload() {
+  jq -n --arg sid "$1" --arg msg "$2" --arg tp "$3" \
+    '{session_id:$sid, agent_id:"a1", agent_type:"claude-watchdog:session-analyzer", last_assistant_message:$msg, agent_transcript_path:$tp}'
+}
+session_files() { find "$CLAUDE_WATCHDOG_ANALYSES_DIR" -maxdepth 1 -name "$1-*.md"; }
+
+# --- Test 10: a report sent only via SubagentHandback is read from the agent transcript ---
+# The last assistant turn is a tool call, so last_assistant_message arrives empty.
+sid10="persist-t10-$$"
+tp10="$TMPROOT/agent-t10.jsonl"
+handback_line $'### Goals\nHanded back directly.' > "$tp10"
+run_persist "$(stop_payload "$sid10" "" "$tp10")"
+out=$(session_files "$sid10")
+[ -n "$out" ] || fail "handback-only" "no analysis file written"
+grep -q "Handed back directly." "$out" || fail "handback-only" "file missing handback content"
+echo "$PERSIST_OUT" | grep -q "Analysis saved to: $out" || fail "handback-only" "stdout missing save path"
+pass "handback-only-persisted"
+
+# --- Test 11: text turn then a different handback keeps one file, holding the handback ---
+# The handback is what the caller received; the earlier text turn is a draft.
+sid11="persist-t11-$$"
+tp11="$TMPROOT/agent-t11.jsonl"
+text_line $'### Goals\nDraft report.' > "$tp11"
+run_persist "$(stop_payload "$sid11" $'### Goals\nDraft report.' "$tp11")"
+handback_line $'### Goals\nFinal report.' >> "$tp11"
+run_persist "$(stop_payload "$sid11" "" "$tp11")"
+[ "$(session_files "$sid11" | wc -l)" -eq 1 ] || fail "text-then-handback" "expected exactly one file"
+out=$(session_files "$sid11")
+grep -q "Final report." "$out" || fail "text-then-handback" "file does not hold the handback"
+pass "text-then-handback-replaces-draft"
+
+# --- Test 12: text turn then an identical handback does not duplicate ---
+sid12="persist-t12-$$"
+tp12="$TMPROOT/agent-t12.jsonl"
+text_line $'### Goals\nSame report.' > "$tp12"
+run_persist "$(stop_payload "$sid12" $'### Goals\nSame report.' "$tp12")"
+handback_line $'### Goals\nSame report.' >> "$tp12"
+run_persist "$(stop_payload "$sid12" "" "$tp12")"
+[ "$(session_files "$sid12" | wc -l)" -eq 1 ] || fail "identical-handback" "expected exactly one file"
+pass "identical-handback-not-duplicated"
+
+# --- Test 13: empty message and no handback in the transcript still skips ---
+sid13="persist-t13-$$"
+tp13="$TMPROOT/agent-t13.jsonl"
+text_line "Working on it." > "$tp13"
+run_persist "$(stop_payload "$sid13" "" "$tp13")"
+[ -z "$(session_files "$sid13")" ] || fail "no-handback" "wrote a file without a report"
+grep -q "empty last_assistant_message for session=$sid13" "$CLAUDE_WATCHDOG_LOG" \
+  || fail "no-handback" "no empty-message skip log"
+pass "empty-without-handback-skips"
+
 echo "--- all persist tests passed ---"
