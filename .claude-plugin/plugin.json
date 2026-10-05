@@ -63,6 +63,12 @@
       "description": "After session analysis, present actionable recommendations as an interactive multi-select prompt so you can choose which items to address. Selected items are saved to .claude/watchdog-todo.md",
       "default": false
     },
+    "fix_recommendations": {
+      "type": "boolean",
+      "title": "Fix recommendations",
+      "description": "After presenting the analysis, have Claude apply its [code] recommendations in the same turn. [instruction] items are drafted, not written to rule files, and nothing is committed. With interactive recommendations on, only the items you select are applied. Default is false",
+      "default": false
+    },
     "skip_with_background_tasks": {
       "type": "boolean",
       "title": "Skip while background tasks run",

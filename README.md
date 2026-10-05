@@ -114,6 +114,7 @@ with `/plugin configure claude-watchdog`:
 | Hold input while analysis runs | `false` | Block newly submitted prompts while an analysis is still in flight so they don't interleave with it. A held prompt is recoverable with up-arrow; resubmitting overrides the hold, and it auto-expires after 240 s |
 | Enforce pinned subagent models | `false` | Block a `Task`/`Agent` dispatch that names an agent whose definition pins a `model:` but passes no explicit `model` |
 | Wake on bot reviews and CI | `false` | After a `git push` / `gh pr create` on a branch with an open PR, wake Claude once checks settle with failures and new bot comments (see below) |
+| Fix recommendations | `false` | After presenting the analysis, Claude applies its `[code]` recommendations in the same turn. `[instruction]` items are drafted, not written, and nothing is committed. With interactive recommendations on, only the selected items are applied |
 
 ### Environment variable overrides
 
@@ -131,6 +132,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_HOLD_INPUT` | `0` | Set to `1` to hold newly submitted prompts while an analysis is in flight (see below) |
 | `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `0` | Set to `1` to block a `Task`/`Agent` dispatch that ignores an agent's pinned model (see below) |
 | `CLAUDE_WATCHDOG_AWAIT_REVIEWS` | `0` | Set to `1` to wake Claude when bot reviews and CI settle after a push (see below) |
+| `CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS` | `0` | Set to `1` to have Claude apply the analysis's recommendations after presenting it |
 
 ### Advanced overrides
 

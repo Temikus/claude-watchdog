@@ -135,6 +135,8 @@ behaviour, not the accidental one.
       file exists for the session, and points at the newest one.
 - [x] `interactive_recommendations` switches the post-analysis instruction
       block and the todo path.
+- [x] `fix_recommendations` switches the post-analysis instruction to the
+      fix block, alone and combined with `interactive_recommendations`.
 - [x] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
       stderr, exit 2, nothing on stdout.
 - [x] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the
