@@ -83,6 +83,16 @@ after=$(grep -c "LOG ROTATED" "$LOG")
 [ "$after" = "$before" ] || { cat "$LOG"; fail "log-rotation-headroom" "rotated again on the very next run"; }
 pass "log-rotation-leaves-headroom"
 
+# --- Test 1c: a cap of 1 still trims ---
+# 80% of 1 floors to 0, and slice(-0) keeps the whole log.
+new_case
+mkdir -p "$(dirname "$LOG")"
+for i in $(seq 1 500); do echo "[old] filler line $i"; done > "$LOG"
+stop_run "life-rotate1-$$" "$TRANSCRIPT" CLAUDE_WATCHDOG_LOG_MAX_LINES=1 CLAUDE_WATCHDOG_MIN_TOOL_USES=99 > /dev/null
+lines=$(wc -l < "$LOG" | tr -d ' ')
+[ "$lines" -le 20 ] || fail "log-rotation-cap-1" "expected a trimmed log, got $lines lines"
+pass "log-rotation-cap-1"
+
 # --- Test 2: a log under the cap is left alone ---
 new_case
 mkdir -p "$(dirname "$LOG")"

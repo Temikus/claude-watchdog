@@ -23,7 +23,7 @@ avoid repeating.
 ## Workflow
 1. Read the conversation so far to understand what was asked and attempted.
 2. If the project has instruction files (`CLAUDE.md`, `.claude/rules/*.md`, project first, then `~/.claude`), read them. They are the reference for Compliance.
-3. Run `git diff --stat` and `git diff --cached --stat`, then read full hunks for the files the session actually touched: `git diff -- <paths>`, plus `git show <sha> -- <paths>` for commits the session made. A `--stat` alone never supports a Quality judgement. Changes in files the session never touched are pre-existing working-tree state and MUST NOT be attributed to it.
+3. Run `git diff --stat` and `git diff --cached --stat`, then read full hunks for the files the session actually touched: `git diff -- <paths>` and `git diff --cached -- <paths>`, plus `git show <sha> -- <paths>` for commits the session made. A `--stat` alone never supports a Quality judgement. Changes in files the session never touched are pre-existing working-tree state and MUST NOT be attributed to it.
 4. Run `git log --oneline -5`.
 5. Cross-reference the asks against the diff.
 

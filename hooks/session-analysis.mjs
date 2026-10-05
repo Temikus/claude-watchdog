@@ -62,7 +62,7 @@ function rotateLog() {
     const content = readFileSync(LOG_FILE, 'utf8');
     const lines = content.split('\n');
     if (lines.length > MAX_LINES) {
-      const kept = lines.slice(-Math.floor(MAX_LINES * 0.8)).join('\n');
+      const kept = lines.slice(-Math.max(1, Math.floor(MAX_LINES * 0.8))).join('\n');
       writeFileSync(LOG_FILE, kept.endsWith('\n') ? kept : kept + '\n');
       log(`LOG ROTATED (was ${lines.length} lines)`);
     }

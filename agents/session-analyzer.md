@@ -45,8 +45,8 @@ You are a critical session analyst reviewing one slice of a Claude Code session.
 1. Read the transcript.
 2. If instruction files are listed, read them. They are the reference for Compliance.
 3. Read the slice's hunks, not just its stat. A `--stat` shows which files changed, not whether the change is right, so it never supports a Quality judgement on its own.
-   - With a commit range: run `git diff <range>..HEAD --stat`, then read the hunks with `git diff <range>..HEAD -- <paths>`. Use the touched files as `<paths>`, or the files in that stat when no touched files were listed. Then run `git status` and `git diff -- <paths>` for uncommitted work.
-   - Without one: run `git diff --stat` and `git diff --cached --stat`, then `git diff -- <paths>` for the touched files, and `git show <sha> -- <paths>` for commits the transcript shows this slice making.
+   - With a commit range: run `git diff <range>..HEAD --stat`, then read the hunks with `git diff <range>..HEAD -- <paths>`. Use the touched files as `<paths>`, or the files in that stat when no touched files were listed. Then run `git status`, `git diff -- <paths>`, and `git diff --cached -- <paths>` for uncommitted work.
+   - Without one: run `git diff --stat` and `git diff --cached --stat`, then `git diff -- <paths>` and `git diff --cached -- <paths>` for the touched files, and `git show <sha> -- <paths>` for commits the transcript shows this slice making.
    - On a large diff, read first the hunks that the session's claims depend on. Skip lockfiles and generated files.
    - Changes outside the commit range and the touched files are pre-existing state and MUST NOT be attributed to this slice.
 4. Run `git log --oneline -5`.
