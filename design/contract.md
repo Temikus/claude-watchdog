@@ -465,8 +465,10 @@ GLOBAL_SESSIONS_DIR   = <WATCHDOG_TMP>/sessions
 ```
 
 `GLOBAL_SESSIONS_DIR` is always created and always holds the echo and pending
-sentinels, regardless of the local-storage setting, so those two files resolve to
-the same path on the block turn and the echo turn.
+sentinels, the marker, and the cursor, regardless of the local-storage setting.
+The sentinels must resolve to the same path on the block turn and the echo turn;
+the marker and cursor must survive a session moving to another project root, such
+as into a git worktree.
 
 When `LOCAL_SESSION_STORAGE` is truthy **and** `cwd` is non-empty, is not the
 literal four-character string `"null"`, and exists on disk:
@@ -517,8 +519,8 @@ All names below live in `SESSIONS_DIR` unless stated otherwise.
 
 | Name | Kind | Contents |
 | --- | --- | --- |
-| `<session_id>` | directory | Marker. Empty. Created with plain `mkdir` (not recursive) so a second concurrent run gets `EEXIST` |
-| `cursor-<session_id>.txt` | file | Cursor, three lines (below) |
+| `<session_id>` | directory, always in `GLOBAL_SESSIONS_DIR` | Marker. Empty. Created with plain `mkdir` (not recursive) so a second concurrent run gets `EEXIST` |
+| `cursor-<session_id>.txt` | file, always in `GLOBAL_SESSIONS_DIR` | Cursor (below). A cursor found only in a project-local `SESSIONS_DIR` (written by an older version) is moved to the global path, keeping its mtime, and logged as `CURSOR: adopted project-local cursor <path>` |
 | `delta-<session_id>.tmp` | file | The raw transcript slice, verbatim, joined with `\n` |
 | `condensed-<session_id>.txt` | file | The condensed transcript handed to the analyzer |
 | `raw-<session_id>.txt` | file | **Never written by the current code.** See below |
@@ -616,8 +618,9 @@ hook and persist hook insert their own tag after the timestamp: `[hold] ` and
 `rotateLog()` runs once per Stop invocation, after the session header lines are
 written and only on invocations that pass gates 1 to 4. It reads the whole file,
 splits on `\n`, and when the line count exceeds `MAX_LINES` writes back the last
-`MAX_LINES` elements, ensuring a trailing newline, then appends
-`LOG ROTATED (was <n> lines)`. **[UNTESTED]**
+`floor(MAX_LINES * 0.8)` elements, ensuring a trailing newline, then appends
+`LOG ROTATED (was <n> lines)`. The 20% headroom keeps the next runs from
+rotating again.
 
 ### 6.6 Cleanup sweep
 
@@ -681,7 +684,7 @@ The complete set, per hook.
 | `TRIGGER: injecting session-analyzer subagent request (mode=json\|exit2)` | The trigger |
 | `CURSOR: ...` | `malformed uuid, ignoring cursor`, `stale transcript path, ignoring cursor`, `uuid=<u> hint=<n> -> delta starts at line <n>`, `updated to uuid=<u> line=<n>`, `invalid last-uuid output, cursor unchanged` |
 | `ECHO: stale sentinel cleared (fresh turn, not a continuation)` | Sentinel present but this Stop is not a continuation |
-| `RULES: skipped <path> (<n>B, over 8KB\|total cap)` | An instruction file was excluded |
+| `RULES: total cap skipped <n> file(s): <path> (<n>B), ...` | One line listing every instruction file the 16 KB total cap excluded |
 | `LOCAL_STORAGE: ...` | Storage resolution, three variants (section 6.1) |
 | `LOG ROTATED (was <n> lines)` | Rotation fired |
 | `tool_use count (delta): <n> (edits=<n> mutating_bash=<n> user_messages=<n>)` | Always, after the delta stats |

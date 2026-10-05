@@ -95,7 +95,19 @@ for f in "$prompt" "$skill"; do
   check_rule_present "$f" "delete the heading instead" "the conditional-section negative example"
   check_rule_present "$f" "Never use an em dash" "the em/en dash punctuation rule"
   check_rule_present "$f" "Every heading is \`###\`" "the heading-level rule"
+  check_rule_present "$f" "Check-it-or-drop-it rule" "the check-it-or-drop-it rule"
+  check_rule_present "$f" "never supports a Quality judgement" "the stat-is-not-enough rule"
 done
+
+# The commit range is the slice boundary; 67 of 76 analyzer runs read no hunk
+# while the prompt allowed --stat only.
+check_rule_present "$prompt" 'git diff <range>..HEAD -- <paths>' "hunk reads over the commit range"
+# shellcheck disable=SC2016  # literal backticks from the markdown, not a command
+if grep -qF -- 'use `--stat` only' "$prompt"; then
+  echo "FAIL: $prompt still allows a stat-only review" >&2; rc=1
+else
+  echo "PASS: $prompt has no stat-only path"
+fi
 
 # --- Twin parity: the ## Output section must have the same headings, in the
 # same order, in both files. Prose differs deliberately (transcript vs. live
@@ -122,7 +134,9 @@ mk_transcript "$TMPROOT/rounds.jsonl" 1 4 attr
 cat "$TMPROOT/rounds.jsonl" >> "$tp4"
 run_hook "$sid4" "$(stop_payload "$sid4" "$tp4" "$cwd")" > /dev/null
 reason=$(printf '%s' "$STOP_OUT" | jq -r '.reason // empty')
-if echo "$reason" | grep -qF "Session attribution: model Opus 5.5 (1M context), commit trailer $TRAILER"; then
+# Every trailer line, not just the first: with only Co-Authored-By passed, the
+# analyzer took the Claude-Session line it saw elsewhere as a mismatch.
+if echo "$reason" | grep -qF "Session attribution: model Opus 5.5 (1M context), commit trailer lines: $TRAILER; Claude-Session: https://claude.ai/code/session_x"; then
   echo "PASS: spawn prompt carries the session's model and trailer"
 else
   echo "$reason" | grep -i attribution >&2 || true

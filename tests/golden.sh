@@ -13,6 +13,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 GOLDEN_DIR="tests/golden"
 REGEN="${GOLDEN_REGEN:-0}"
 FAILED=0
+# check() usually runs at the end of a pipeline, i.e. in a subshell, where
+# FAILED=1 is lost. It also records a failure in this file, read at the end.
+FAILED_MARK="$(mktemp)"
 
 # --- the one normalisation ------------------------------------------------
 #
@@ -43,13 +46,14 @@ check() {
   fi
   if [ ! -f "$path" ]; then
     echo "FAIL: $name - golden missing (run 'just golden-regen')" >&2
-    FAILED=1
+    FAILED=1; echo "$name" >> "$FAILED_MARK"
     return 0
   fi
   if diff -u "$path" <(printf '%s\n' "$actual") > /tmp/golden-diff.$$ 2>&1; then
     pass "$name"
   else
     echo "FAIL: $name - output differs from golden" >&2
+    echo "$name" >> "$FAILED_MARK"
     sed -e "s|^--- $path|--- golden|" -e 's|^+++ /dev/fd.*|+++ actual|' /tmp/golden-diff.$$ >&2
     FAILED=1
   fi
@@ -106,7 +110,7 @@ done < tests/labels.txt
 SID="golden-session-0000"
 TMPROOT="$(mktemp -d)"
 TMPREAL="$(cd "$TMPROOT" && pwd -P)"
-trap 'rm -rf "$TMPROOT"' EXIT
+trap 'rm -rf "$TMPROOT" "$FAILED_MARK"' EXIT
 export NORM_TMP="$TMPROOT" NORM_TMP_REAL="$TMPREAL" NORM_SESSION="$SID"
 
 PROJ="$TMPROOT/proj"
@@ -188,9 +192,9 @@ reset_state
 skip_case skip-file "$SID" "$TRIGGER_TP" ''
 rm -f "$PROJ/.claude-watchdog-skip"
 
-# 9. concurrent run (marker already held)
+# 9. concurrent run (marker already held; the marker is always global)
 reset_state
-mkdir -p "$SESS_DIR/$SID"
+mkdir -p "$GLOBAL_SESS/$SID"
 skip_case concurrent "$SID" "$TRIGGER_TP" ''
 
 # 10. transcript missing
@@ -258,6 +262,7 @@ run_stop "$(stop_payload "$SID" "$TRIGGER_TP" "$PROJ")" "${BASE_ENV[@]}" \
   || fail "golden:diagnostics" "expected BLOCK, got $(outcome "$STOP_OUT" "$STOP_RC")"
 head -1 "$SESS_DIR/condensed-$SID.txt" | check stop.diagnostics.txt
 
+[ -s "$FAILED_MARK" ] && FAILED=1
 if [ "$FAILED" -ne 0 ]; then
   echo "--- golden comparison failed ---" >&2
   echo "If the change was intentional, run 'just golden-regen' and commit the" >&2

@@ -66,12 +66,32 @@ oc=$(stop_run "life-rotate-$$" "$TRANSCRIPT" CLAUDE_WATCHDOG_LOG_MAX_LINES=100 C
 [ "$oc" = "SKIP" ] || fail "log-rotation" "expected SKIP, got $oc"
 grep -q "LOG ROTATED (was 50[0-9] lines)" "$LOG" || { cat "$LOG"; fail "log-rotation-line" "no LOG ROTATED line"; }
 lines=$(wc -l < "$LOG" | tr -d ' ')
-# 100 kept + the ROTATED line + the handful this run appends afterwards.
+# Trimmed to 80% of the cap (80 kept) + the ROTATED line + the handful this run
+# appends afterwards.
 # shellcheck disable=SC2015  # fail() exits, so this is an assert, not if/else
-[ "$lines" -ge 100 ] && [ "$lines" -le 115 ] || fail "log-rotation-size" "expected ~100 lines, got $lines"
+[ "$lines" -ge 80 ] && [ "$lines" -le 95 ] || fail "log-rotation-size" "expected ~80 lines, got $lines"
 grep -q "filler line 1$" "$LOG" && fail "log-rotation-head" "oldest lines were not dropped"
 grep -q "filler line 500" "$LOG" || fail "log-rotation-tail" "newest kept lines were dropped"
 pass "log-rotation"
+
+# --- Test 1b: the next run does not rotate again ---
+# Trimming to exactly the cap left every later run one line over it, so each one
+# rewrote the log and added a LOG ROTATED line.
+before=$(grep -c "LOG ROTATED" "$LOG")
+stop_run "life-rotate2-$$" "$TRANSCRIPT" CLAUDE_WATCHDOG_LOG_MAX_LINES=100 CLAUDE_WATCHDOG_MIN_TOOL_USES=99 > /dev/null
+after=$(grep -c "LOG ROTATED" "$LOG")
+[ "$after" = "$before" ] || { cat "$LOG"; fail "log-rotation-headroom" "rotated again on the very next run"; }
+pass "log-rotation-leaves-headroom"
+
+# --- Test 1c: a cap of 1 still trims ---
+# 80% of 1 floors to 0, and slice(-0) keeps the whole log.
+new_case
+mkdir -p "$(dirname "$LOG")"
+for i in $(seq 1 500); do echo "[old] filler line $i"; done > "$LOG"
+stop_run "life-rotate1-$$" "$TRANSCRIPT" CLAUDE_WATCHDOG_LOG_MAX_LINES=1 CLAUDE_WATCHDOG_MIN_TOOL_USES=99 > /dev/null
+lines=$(wc -l < "$LOG" | tr -d ' ')
+[ "$lines" -le 20 ] || fail "log-rotation-cap-1" "expected a trimmed log, got $lines lines"
+pass "log-rotation-cap-1"
 
 # --- Test 2: a log under the cap is left alone ---
 new_case

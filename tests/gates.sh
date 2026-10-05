@@ -478,7 +478,8 @@ head -c 7000 /dev/zero | tr '\0' 'c' > "$GHOME/.claude/CLAUDE.md"
 printf 'small global rule\n' > "$GHOME/.claude/rules/aaa-global.md"
 gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-cap" BLOCK
-assert_log "rules-cap" "RULES: skipped $GHOME/.claude/CLAUDE.md (7000B, total cap)"
+# One summary line for every file the cap dropped, not one line each.
+assert_log "rules-cap" "RULES: total cap skipped 1 file(s): $GHOME/.claude/CLAUDE.md (7000B)"
 assert_out "rules-cap" "aaa-global.md"
 pass "rules-16kb-total-cap"
 

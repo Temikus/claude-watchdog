@@ -431,4 +431,61 @@ grep -q "SKIP: analysis already scheduled via session cron" "$log24" || { cat "$
 cleanup_session "$sid24"
 pass "session-cron-skip"
 
+# --- Test 25: moving into a git worktree keeps the cursor ---
+# A worktree has its own .git file, so it becomes the project root. The cursor
+# used to live under that root, so the move lost it and the whole session was
+# analysed again.
+sid25="cursor-t25-$$"
+cleanup_session "$sid25"
+t25_repo="$TMPROOT/wt-repo"
+t25_wt="$t25_repo/.claude/worktrees/feature"
+mkdir -p "$t25_repo/.git" "$t25_wt"
+echo "gitdir: $t25_repo/.git/worktrees/feature" > "$t25_wt/.git"
+t25_transcript="$TMPROOT/t25.jsonl"
+mk_transcript "$t25_transcript" 1 3 WTOLD
+log25a="$TMPROOT/log-t25a"
+run_stop "$(stop_payload "$sid25" "$t25_transcript" "$t25_repo")" \
+  CLAUDE_WATCHDOG_LOG="$log25a" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1
+[ "$(outcome "$STOP_OUT" "$STOP_RC")" = "BLOCK" ] || { cat "$log25a"; fail "worktree-first-exit" "expected BLOCK"; }
+for i in 1 2 3; do
+  mk_msg user "u-WTNEW-$i" "WTNEW user $i" >> "$t25_transcript"
+  mk_msg assistant "a-WTNEW-$i" "WTNEW assistant $i" >> "$t25_transcript"
+done
+log25b="$TMPROOT/log-t25b"
+run_stop "$(stop_payload "$sid25" "$t25_transcript" "$t25_wt")" \
+  CLAUDE_WATCHDOG_LOG="$log25b" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1
+[ "$(outcome "$STOP_OUT" "$STOP_RC")" = "BLOCK" ] || { cat "$log25b"; fail "worktree-second-exit" "expected BLOCK"; }
+grep -q "CURSOR: uuid=a-WTOLD-3" "$log25b" || { cat "$log25b"; fail "worktree-cursor-kept" "cursor lost after moving into the worktree"; }
+wt_condensed="$t25_wt/.claude/tmp/claude-watchdog/sessions/condensed-${sid25}.txt"
+[ -f "$wt_condensed" ] || { cat "$log25b"; fail "worktree-condensed" "condensed not written under the worktree"; }
+if grep -q "WTOLD" "$wt_condensed"; then fail "worktree-no-old" "already-analysed work leaked into the worktree slice"; fi
+cleanup_session "$sid25"
+pass "worktree-keeps-cursor"
+
+# --- Test 26: a cursor left in project-local storage by an older version is adopted ---
+sid26="cursor-t26-$$"
+cleanup_session "$sid26"
+t26_repo="$TMPROOT/legacy-repo"
+t26_local="$t26_repo/.claude/tmp/claude-watchdog/sessions"
+mkdir -p "$t26_repo/.git" "$t26_local"
+t26_transcript="$TMPROOT/t26.jsonl"
+mk_transcript "$t26_transcript" 1 3 LEGOLD
+printf 'a-LEGOLD-3\n6\n%s\n' "$t26_transcript" > "$t26_local/cursor-${sid26}.txt"
+for i in 1 2 3; do
+  mk_msg user "u-LEGNEW-$i" "LEGNEW user $i" >> "$t26_transcript"
+  mk_msg assistant "a-LEGNEW-$i" "LEGNEW assistant $i" >> "$t26_transcript"
+done
+log26="$TMPROOT/log-t26"
+run_stop "$(stop_payload "$sid26" "$t26_transcript" "$t26_repo")" \
+  CLAUDE_WATCHDOG_LOG="$log26" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0 \
+  CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE=1
+[ "$(outcome "$STOP_OUT" "$STOP_RC")" = "BLOCK" ] || { cat "$log26"; fail "legacy-cursor-exit" "expected BLOCK"; }
+grep -q "CURSOR: uuid=a-LEGOLD-3" "$log26" || { cat "$log26"; fail "legacy-cursor-adopted" "legacy local cursor was ignored"; }
+[ ! -f "$t26_local/cursor-${sid26}.txt" ] || fail "legacy-cursor-moved" "legacy cursor left behind"
+[ "$(sed -n '1p' "$WATCHDOG_DIR/cursor-${sid26}.txt")" = "a-LEGNEW-3" ] || fail "legacy-cursor-global" "global cursor not advanced"
+cleanup_session "$sid26"
+pass "legacy-local-cursor-adopted"
+
 echo "--- all cursor tests passed ---"
