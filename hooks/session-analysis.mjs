@@ -56,6 +56,7 @@ const CURSOR_TTL_DAYS = intCfg('CLAUDE_WATCHDOG_CURSOR_TTL_DAYS', process.env.CL
 const COOLDOWN_SECONDS = intCfg('COOLDOWN_SECONDS', cfg('CLAUDE_WATCHDOG_COOLDOWN_SECONDS', 'CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS', '600'), 600);
 const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
 const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
+const FIX_RECS = cfg('CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_FIX_RECOMMENDATIONS', '0');
 const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
 const HOLD_INPUT = cfg('CLAUDE_WATCHDOG_HOLD_INPUT', 'CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS', '0');
 const INCLUDE_RULES = cfg('CLAUDE_WATCHDOG_INCLUDE_RULES', 'CLAUDE_PLUGIN_OPTION_INCLUDE_RULES', '1');
@@ -675,19 +676,45 @@ If the analysis has no Efficiency, Quality, or Compliance section and its Recomm
 
 If a notice that the analyzer finished arrives after you have already presented the analysis or the clean line, do not repeat or comment on it: reply with exactly "✓ Watchdog check already reported.". If you have not presented it yet, apply the rule above to the analysis in the notice now.`;
 
-  let postAnalysis;
-  if (isInteractive) {
-    postAnalysis = `${foreground}
+  // Rule files apply to every later session, so the fix branch drafts
+  // [instruction] items instead of writing them.
+  const isFix = FIX_RECS === '1' || FIX_RECS === 'true';
+  const fixRules = `- [code]: make the change. Check the finding against the code first; if it is wrong or already addressed, skip it.
+- [instruction]: show the rule text you would add and where, but do not write it to CLAUDE.md or any rules file unless the user asks.
+- [process]: nothing to change; leave it as presented.
+Do not commit or push the fixes. Finish with one line per recommendation: applied, skipped (and why), or left for the user.`;
 
-If the analysis has recommendations, extract them from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
+  const askBlock = `If the analysis has recommendations, extract them from the Recommendations section. Each is tagged [code], [instruction], or [process]. Use the AskUserQuestion tool to present them as actionable options:
 - question: "Which recommendations would you like to address?"
 - header: "Actions"
 - multiSelect: true
-- For each recommendation, create an option with the bold title as the label and a description that starts with its tag (e.g. "[code] ...")
+- For each recommendation, create an option with the bold title as the label and a description that starts with its tag (e.g. "[code] ...")`;
+
+  let postAnalysis;
+  if (isInteractive && isFix) {
+    postAnalysis = `${foreground}
+
+${askBlock}
+
+If the user selects any recommendations, apply them now, after the analysis has been presented in full:
+${fixRules}
+
+Do not act on any recommendation the user does not select. Then stop.`;
+  } else if (isInteractive) {
+    postAnalysis = `${foreground}
+
+${askBlock}
 
 If the user selects any recommendations, save them as a markdown checklist to '${safeTodoPath}' (create the directory if needed). Put selected [instruction] items under a "## Rules to add" heading and all other selected items under a "## Tasks" heading; omit an empty heading. Format each item as an unchecked task: "- [ ] recommendation text". If the file already exists, overwrite it.
 
 Do not act on any recommendation the user does not select. Then stop.`;
+  } else if (isFix) {
+    postAnalysis = `${foreground}
+
+If the analysis has recommendations, apply them in this turn, after the analysis has been presented in full:
+${fixRules}
+
+Then stop.`;
   } else {
     postAnalysis = `${foreground}
 

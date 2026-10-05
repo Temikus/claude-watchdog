@@ -579,6 +579,36 @@ refute_out "interactive-on" "Do not act on any recommendation unless the user as
 pass "interactive-recommendations-switches-block-and-todo-path"
 
 # ===========================================================================
+# fix_recommendations
+# ===========================================================================
+
+sid=$(new_sid)
+gate_run "$sid" "$sr_transcript" "$PROJ" ""
+refute_out "fix-off" "apply them"
+pass "fix-recommendations-off-by-default"
+
+sid=$(new_sid)
+gate_run "$sid" "$sr_transcript" "$PROJ" "" CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS=1
+assert_outcome "fix-on" BLOCK
+assert_out "fix-on" "present the analysis verbatim and in full"
+assert_out "fix-on" "✓ Watchdog check successful - nothing to report."
+assert_out "fix-on" "apply them in this turn, after the analysis has been presented in full"
+assert_out "fix-on" "do not write it to CLAUDE.md or any rules file"
+assert_out "fix-on" "Do not commit or push the fixes"
+refute_out "fix-on" "Do not act on any recommendation unless the user asks"
+refute_out "fix-on" "AskUserQuestion"
+pass "fix-recommendations-switches-block"
+
+sid=$(new_sid)
+gate_run "$sid" "$sr_transcript" "$PROJ" "" CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS=1 CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS=1
+assert_outcome "fix-interactive" BLOCK
+assert_out "fix-interactive" "AskUserQuestion"
+assert_out "fix-interactive" "If the user selects any recommendations, apply them now"
+assert_out "fix-interactive" "Do not act on any recommendation the user does not select"
+refute_out "fix-interactive" "watchdog-todo.md"
+pass "fix-recommendations-with-interactive-applies-selection"
+
+# ===========================================================================
 # Legacy exit-2 mode
 # ===========================================================================
 

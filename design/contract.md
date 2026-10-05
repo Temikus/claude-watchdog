@@ -276,6 +276,7 @@ Every other `cfg()` call site is **[UNTESTED]** for precedence.
 | Cooldown seconds | `CLAUDE_WATCHDOG_COOLDOWN_SECONDS` | `CLAUDE_PLUGIN_OPTION_COOLDOWN_SECONDS` | `600` | int |
 | Local session storage | `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE` | `1` | bool |
 | Interactive recommendations | `CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS` | `CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS` | `0` | bool |
+| Fix recommendations | `CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS` | `CLAUDE_PLUGIN_OPTION_FIX_RECOMMENDATIONS` | `0` | bool |
 | Skip with background tasks | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS` | `1` | bool |
 | Hold input | `CLAUDE_WATCHDOG_HOLD_INPUT` | `CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS` | `0` | bool |
 | Enforce subagent model | `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `CLAUDE_PLUGIN_OPTION_ENFORCE_SUBAGENT_MODEL` | `0` | bool |
@@ -760,6 +761,12 @@ not to act on any recommendation unless asked. When
 `AskUserQuestion` block that names the todo path `<cwd>/.claude/watchdog-todo.md`
 (also `\n`-stripped) and specifies the `## Rules to add` and `## Tasks` headings.
 **[UNTESTED]**
+
+When `FIX_RECS` is truthy, the last part instead tells the model to apply the
+recommendations after presenting them: `[code]` items are changed, `[instruction]`
+items are drafted but not written, `[process]` items are left, and nothing is
+committed or pushed. With `INTERACTIVE_RECS` also truthy, the `AskUserQuestion`
+block stays, the selected items are applied, and no todo file is written.
 
 ### 7.4 Instruction files
 
