@@ -68,12 +68,12 @@ assert_log() {
 
 assert_out() {
   local label="$1" pattern="$2"
-  printf '%s' "$STOP_OUT" | grep -q "$pattern" || fail "$label" "stdout missing /$pattern/"
+  printf '%s' "$STOP_TEXT" | grep -q "$pattern" || fail "$label" "instruction missing /$pattern/"
 }
 
 refute_out() {
   local label="$1" pattern="$2"
-  printf '%s' "$STOP_OUT" | grep -q "$pattern" && fail "$label" "stdout unexpectedly matched /$pattern/"
+  printf '%s' "$STOP_TEXT" | grep -q "$pattern" && fail "$label" "instruction unexpectedly matched /$pattern/"
   return 0
 }
 
@@ -428,7 +428,7 @@ printf 'global extra rules\n' > "$GHOME/.claude/rules/aaa-global.md"
 gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-order" BLOCK
 assert_out "rules-order" "User instruction files (read only when a compliance question actually arises): "
-rules_line=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o 'User instruction files.*' | head -1)
+rules_line=$(printf '%s' "$STOP_TEXT" | grep -o 'User instruction files.*' | head -1)
 [ -n "$rules_line" ] || fail "rules-order" "no rules line in prompt"
 # Project files must all precede global ones, even though the global rule sorts
 # first by filename.
@@ -460,7 +460,7 @@ gate_run "$sid" "$sr_transcript" "$rulesproj" ""
 assert_outcome "rules-8kb" BLOCK
 assert_log "rules-8kb" "RULES: truncated $rulesproj/.claude/rules/big.md (9000B -> 8192B head)"
 refute_out "rules-8kb" "$rulesproj/.claude/rules/big.md"
-big_copy=$(printf '%s' "$STOP_OUT" | jq -r '.reason' | grep -o "$GSESSIONS/rules-[^,\"]*big.md" | head -1)
+big_copy=$(printf '%s' "$STOP_TEXT" | grep -o "$GSESSIONS/rules-[^,\"]*big.md" | head -1)
 [ -n "$big_copy" ] || fail "rules-8kb" "no truncated copy in the prompt"
 [ -f "$big_copy" ] || fail "rules-8kb" "truncated copy $big_copy was not written"
 grep -q "$rulesproj/.claude/rules/big.md" "$big_copy" \
@@ -556,8 +556,9 @@ gate_run "$sid" "$sr_transcript" "$PROJ" ""
 assert_outcome "interactive-off" BLOCK
 assert_out "interactive-off" "Run the agent in the FOREGROUND"
 assert_out "interactive-off" "present the analysis verbatim and in full"
-assert_out "interactive-off" "✓ watchdog: no findings"
-assert_out "interactive-off" "after you have already replied"
+assert_out "interactive-off" "✓ Watchdog check successful - nothing to report."
+assert_out "interactive-off" "after you have already presented"
+assert_out "interactive-off" "If you have not presented it yet"
 assert_out "interactive-off" "Do not act on any recommendation unless the user asks"
 refute_out "interactive-off" "AskUserQuestion"
 refute_out "interactive-off" "watchdog-todo.md"
@@ -570,8 +571,8 @@ assert_outcome "interactive-on" BLOCK
 # follow-up differs.
 assert_out "interactive-on" "Run the agent in the FOREGROUND"
 assert_out "interactive-on" "present the analysis verbatim and in full"
-assert_out "interactive-on" "✓ watchdog: no findings"
-assert_out "interactive-on" "after you have already replied"
+assert_out "interactive-on" "✓ Watchdog check successful - nothing to report."
+assert_out "interactive-on" "after you have already presented"
 assert_out "interactive-on" "AskUserQuestion"
 assert_out "interactive-on" "$PROJ/.claude/watchdog-todo.md"
 refute_out "interactive-on" "Do not act on any recommendation unless the user asks"
@@ -593,10 +594,39 @@ legacy_out=$(printf '%s' "$(stop_payload "$sid" "$sr_transcript" "$PROJ")" | env
   "${HOOK_STOP_CMD[@]}" 2>"$legacy_err") || legacy_rc=$?
 [ "$legacy_rc" -eq 2 ] || { cat "$GLOG" >&2; fail "legacy-exit2" "expected exit 2, got $legacy_rc"; }
 [ -z "$legacy_out" ] || fail "legacy-exit2" "expected empty stdout, got: $legacy_out"
-grep -q 'Please spawn a session-analyzer agent' "$legacy_err" || fail "legacy-exit2" "instruction not on stderr"
-grep -q '"decision"' "$legacy_err" && fail "legacy-exit2" "stderr should carry the bare instruction, not JSON"
+grep -q '^Watchdog is running checks' "$legacy_err" || fail "legacy-exit2" "status line not on stderr"
+grep -q '"decision"' "$legacy_err" && fail "legacy-exit2" "stderr should carry the bare status line, not JSON"
+brief_text "$(cat "$legacy_err")" "$PROJ" | grep -q 'Please spawn a session-analyzer agent' \
+  || fail "legacy-exit2" "stderr does not name a brief holding the instruction"
 assert_log "legacy-exit2" "TRIGGER: injecting session-analyzer subagent request (mode=exit2)"
-pass "legacy-exit2-instruction-on-stderr"
+pass "legacy-exit2-status-line-on-stderr"
+
+# ===========================================================================
+# Output channel: the user sees one line, the instruction sits in the brief
+# ===========================================================================
+
+# Stop additionalContext exists from Claude Code 2.1.163; older or unknown hosts
+# get decision:block.
+for case in "claude-code_2-1-163_harness|context" "claude-code_3-0-0_cli|context" \
+            "claude-code_2-1-162_harness|json" "claude-code_2-0-999|json" "garbage|json" "|json"; do
+  agent="${case%%|*}" want="${case##*|}"
+  sid=$(new_sid)
+  gate_run "$sid" "$sr_transcript" "$PROJ" "" AI_AGENT="$agent"
+  label="channel-${agent:-unset}"
+  assert_outcome "$label" BLOCK
+  assert_log "$label" "(mode=$want)"
+  if [ "$want" = context ]; then
+    printf '%s' "$STOP_OUT" | jq -e '.hookSpecificOutput.hookEventName == "Stop" and (has("decision") | not)' > /dev/null \
+      || fail "$label" "expected Stop additionalContext, got: $STOP_OUT"
+  else
+    printf '%s' "$STOP_OUT" | jq -e '.decision == "block" and (has("hookSpecificOutput") | not)' > /dev/null \
+      || fail "$label" "expected decision:block, got: $STOP_OUT"
+  fi
+  [ "$(printf '%s\n' "$STOP_VISIBLE" | wc -l | tr -d ' ')" = 1 ] || fail "$label" "visible text is not one line: $STOP_VISIBLE"
+  case "$STOP_VISIBLE" in "Watchdog is running checks… Read '"*) ;; *) fail "$label" "unexpected visible text: $STOP_VISIBLE" ;; esac
+  assert_out "$label" "Please spawn a session-analyzer agent"
+done
+pass "output-channel-follows-host-version"
 
 # ===========================================================================
 # stdin handling
@@ -714,6 +744,8 @@ gate_run "$sid" "$utf8_transcript" "$PROJ" "" CLAUDE_WATCHDOG_MAX_BYTES=600
 assert_outcome "utf8-prompt" BLOCK
 printf '%s' "$STOP_OUT" > "$TMPROOT/utf8-stdout.json"
 assert_utf8_clean "utf8-prompt" "$TMPROOT/utf8-stdout.json"
+printf '%s' "$STOP_TEXT" > "$TMPROOT/utf8-brief.txt"
+assert_utf8_clean "utf8-prompt" "$TMPROOT/utf8-brief.txt"
 pass "utf8-prompt-output-is-valid-utf8"
 
 # Per-tool-result caps truncate by character count, not bytes. An astral

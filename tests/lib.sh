@@ -23,6 +23,9 @@ cd "$REPO_ROOT"
 while IFS='=' read -r _var _; do
   case "$_var" in CLAUDE_WATCHDOG_*) unset "$_var" ;; esac
 done < <(env)
+# The Stop hook picks its output channel from AI_AGENT, which is set when the
+# suite runs inside Claude Code. Tests that need it pass it explicitly.
+unset AI_AGENT
 
 : "${HOOK_STOP:=node hooks/session-analysis.mjs}"
 : "${HOOK_HOLD:=node hooks/hold-input.mjs}"
@@ -50,12 +53,27 @@ fail() { echo "FAIL: $1 - $2" >&2; exit 1; }
 # run_stop <payload-json> [ENV=VAL ...]
 #   Feeds the payload on stdin. Sets STOP_OUT (stdout, stderr discarded) and
 #   STOP_RC. Never aborts on a non-zero exit; assert on STOP_RC instead.
-STOP_OUT=""; STOP_RC=0
+#   STOP_VISIBLE is the text the user sees; STOP_TEXT is the full instruction,
+#   read from the brief file that STOP_VISIBLE names.
+STOP_OUT=""; STOP_RC=0; STOP_VISIBLE=""; STOP_TEXT=""
 run_stop() {
   local payload="$1"; shift
   STOP_RC=0
   # shellcheck disable=SC2034  # read by the sourcing test scripts
   STOP_OUT=$(printf '%s' "$payload" | env ${1+"$@"} "${HOOK_STOP_CMD[@]}" 2>/dev/null) || STOP_RC=$?
+  STOP_VISIBLE=$(printf '%s' "$STOP_OUT" | jq -r '.reason // .hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
+  # shellcheck disable=SC2034
+  STOP_TEXT=$(brief_text "$STOP_VISIBLE" "$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null || true)" || true)
+}
+
+# brief_text <visible> <cwd> - the brief file's content, or <visible> itself when
+# it names no brief (the inline fallback). A relative path is relative to <cwd>.
+brief_text() {
+  local visible="$1" cwd="$2" path
+  path=$(printf '%s' "$visible" | sed -n "s/^Watchdog is running checks… Read '\(.*\)' and follow it\.$/\1/p")
+  if [ -z "$path" ]; then printf '%s' "$visible"; return; fi
+  case "$path" in /*) ;; *) path="$cwd/$path" ;; esac
+  cat "$path" 2>/dev/null || true
 }
 
 HOLD_OUT=""; HOLD_RC=0
@@ -104,13 +122,13 @@ run_await() {
 }
 
 # Classify a Stop-hook result by its wire protocol: "analyze this session" is a
-# JSON `decision:block` on stdout with exit 0 (BLOCK); any other clean exit is a
-# skip (SKIP); a non-zero exit surfaces as ERR:<code>.
+# JSON `decision:block` or Stop `additionalContext` on stdout with exit 0 (BLOCK);
+# any other clean exit is a skip (SKIP); a non-zero exit surfaces as ERR:<code>.
 outcome() {
   local out="$1" rc="$2"
   if [ "$rc" -ne 0 ]; then
     echo "ERR:$rc"
-  elif printf '%s' "$out" | grep -q '"decision":"block"'; then
+  elif printf '%s' "$out" | grep -q -e '"decision":"block"' -e '"additionalContext"'; then
     echo BLOCK
   else
     echo SKIP

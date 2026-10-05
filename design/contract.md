@@ -523,6 +523,7 @@ All names below live in `SESSIONS_DIR` unless stated otherwise.
 | `cursor-<session_id>.txt` | file, always in `GLOBAL_SESSIONS_DIR` | Cursor (below). A cursor found only in a project-local `SESSIONS_DIR` (written by an older version) is moved to the global path, keeping its mtime, and logged as `CURSOR: adopted project-local cursor <path>` |
 | `delta-<session_id>.tmp` | file | The raw transcript slice, verbatim, joined with `\n` |
 | `condensed-<session_id>.txt` | file | The condensed transcript handed to the analyzer |
+| `brief-<session_id>.md` | file | The instruction Claude reads on trigger (section 7.3) |
 | `raw-<session_id>.txt` | file | **Never written by the current code.** See below |
 | `echo-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Echo sentinel |
 | `pending-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Input-hold sentinel |
@@ -627,7 +628,7 @@ rotating again.
 `cleanupSessionsDir(dir)` runs over `GLOBAL_SESSIONS_DIR` on every invocation and
 over the local sessions directory when one is used. For each entry:
 
-- A **file** matching `^(condensed|raw|delta|echo|pending)-` older than 120
+- A **file** matching `^(condensed|raw|delta|echo|pending|rules|await|brief)-` older than 120
   minutes by mtime is deleted.
 - A **file** matching `^cursor-` older than `CURSOR_TTL_DAYS` days is deleted.
 - A **directory** older than 120 minutes by mtime is `rmdir`ed. A non-empty
@@ -681,7 +682,7 @@ The complete set, per hook.
 | `--- session=<sid> stop_reason=<reason> ---` | Session header, once per invocation past gate 3 |
 | `event: <json>` | The whole event re-serialised, with every string value truncated to 200 chars and given a `...[truncated]` suffix. If serialisation throws, the first 500 chars of the raw stdin are logged instead |
 | `SKIP: ...` | Every gate that skips (section 2) |
-| `TRIGGER: injecting session-analyzer subagent request (mode=json\|exit2)` | The trigger |
+| `TRIGGER: injecting session-analyzer subagent request (mode=context\|json\|exit2)` | The trigger |
 | `CURSOR: ...` | `malformed uuid, ignoring cursor`, `stale transcript path, ignoring cursor`, `uuid=<u> hint=<n> -> delta starts at line <n>`, `updated to uuid=<u> line=<n>`, `invalid last-uuid output, cursor unchanged` |
 | `ECHO: stale sentinel cleared (fresh turn, not a continuation)` | Sentinel present but this Stop is not a continuation |
 | `RULES: total cap skipped <n> file(s): <path> (<n>B), ...` | One line listing every instruction file the 16 KB total cap excluded |
@@ -708,8 +709,23 @@ lines are a de facto API. Only a handful are asserted today.
 
 ### 7.3 The instruction string
 
-On the trigger path the `reason` (or, in legacy mode, the stderr payload) is
-exactly:
+The hook writes the instruction to `<sessions dir>/brief-<sid>.md`. The hook
+returns only one line, because Claude Code prints every Stop-hook channel to the
+user in full:
+
+```
+Watchdog is running checks… Read '<brief path>' and follow it.
+```
+
+`<brief path>` is relative to the event `cwd` when the brief sits under it,
+otherwise absolute. If the brief write fails, the full instruction is sent in
+its place. The output channel depends on the host:
+
+- `AI_AGENT` names Claude Code ≥ 2.1.163: `{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":<line>}}`, logged as `mode=context`.
+- `AI_AGENT` is missing, unparseable, or older: `{"decision":"block","reason":<line>}`, logged as `mode=json`.
+- Legacy mode: the bare line on stderr, exit 2, logged as `mode=exit2`.
+
+The brief is exactly:
 
 ```
 Please spawn a session-analyzer agent to critically analyze this session.
@@ -734,8 +750,10 @@ Use the Agent tool with:
 Both the `cwd` and the condensed path have `\n` stripped before interpolation.
 
 `postAnalysis` always opens with the foreground rule, the clean rule (a clean
-analysis is answered with `✓ watchdog: no findings` instead of relayed), the
-verbatim rule for everything else, and the `✓` reply to a late finish notice;
+analysis is answered with `✓ Watchdog check successful - nothing to report.`
+instead of relayed), the verbatim rule for everything else, and the late finish
+notice rule (`✓ Watchdog check already reported.` if already presented,
+otherwise present it now);
 `tests/golden/stop.prompt.txt` holds the exact text. By default it then says
 not to act on any recommendation unless asked. When
 `INTERACTIVE_RECS` is truthy that last part is instead the multi-paragraph
@@ -797,13 +815,14 @@ Once gate 16 passes:
    mid-turn counts are taken *after* the final message was appended.
 6. Gate 17 (empty condensed).
 7. Write `condensed-<sid>.txt` and log its size.
-8. Compute the instruction (section 7.3).
+8. Compute the instruction and write it to `brief-<sid>.md` (section 7.3).
 9. Write the cursor from `lastUuid(DELTA_FILE)`, if the returned uuid matches
    `^[A-Za-z0-9_-]+$`. A `null` result leaves the cursor untouched with no log
    line at all.
 10. Write the echo sentinel; write the pending sentinel when `HOLD_INPUT` is
     truthy.
-11. Emit (legacy: stderr plus exit 2; default: stdout JSON plus exit 0).
+11. Emit the one-line status (legacy: stderr plus exit 2; otherwise stdout JSON
+    plus exit 0, as `additionalContext` or `decision:block` per section 7.3).
 12. The exit handler removes the marker directory and the delta file.
 
 Step 9 happening before step 11 matters: the cursor advances even if the model
