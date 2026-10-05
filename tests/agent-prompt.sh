@@ -133,7 +133,7 @@ tp4="$TMPROOT/attribution.jsonl"
 mk_transcript "$TMPROOT/rounds.jsonl" 1 4 attr
 cat "$TMPROOT/rounds.jsonl" >> "$tp4"
 run_hook "$sid4" "$(stop_payload "$sid4" "$tp4" "$cwd")" > /dev/null
-reason=$(printf '%s' "$STOP_OUT" | jq -r '.reason // empty')
+reason=$STOP_TEXT
 # Every trailer line, not just the first: with only Co-Authored-By passed, the
 # analyzer took the Claude-Session line it saw elsewhere as a mismatch.
 if echo "$reason" | grep -qF "Session attribution: model Opus 5.5 (1M context), commit trailer lines: $TRAILER; Claude-Session: https://claude.ai/code/session_x"; then
@@ -146,7 +146,7 @@ check_rule_present "$prompt" "Session attribution:" "the session-attribution inp
 
 sid5="attribution-none-$$"
 run_hook "$sid5" "$(stop_payload "$sid5" "$TMPROOT/rounds.jsonl" "$cwd")" > /dev/null
-if printf '%s' "$STOP_OUT" | jq -r '.reason // empty' | grep -qF 'Session attribution'; then
+if printf '%s' "$STOP_TEXT" | grep -qF 'Session attribution'; then
   echo "FAIL: attribution line emitted with nothing to report" >&2; rc=1
 else
   echo "PASS: no attribution line when the transcript names no model"

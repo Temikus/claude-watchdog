@@ -49,7 +49,7 @@ That adds my personal plugin marketplace (which also hosts any future plugins) a
 Run a short session and end Claude's turn. You should see output like:
 
 ```
-[node session-analysis.mjs]: Please spawn a session-analyzer agent...
+Stop hook feedback: Watchdog is running checks… Read '.claude/tmp/claude-watchdog/sessions/brief-<session>.md' and follow it.
 ```
 
 …followed by the analysis. If nothing appears, check `~/.claude/logs/claude-watchdog.log` — every hook invocation is logged with the reason it ran or skipped.

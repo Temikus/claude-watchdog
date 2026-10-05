@@ -248,7 +248,7 @@ run_stop "$(stop_payload "$SID" "$TRIGGER_TP" "$PROJ")" "${BASE_ENV[@]}" \
   CLAUDE_WATCHDOG_MIN_TOOL_USES=5 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
 [ "$(outcome "$STOP_OUT" "$STOP_RC")" = BLOCK ] \
   || fail "golden:stop.prompt" "expected BLOCK, got $(outcome "$STOP_OUT" "$STOP_RC")"
-printf '%s' "$STOP_OUT" | jq -r '.reason' | check stop.prompt.txt
+printf '%s\n' "$STOP_TEXT" | check stop.prompt.txt
 
 # The verbose header, with its counts, off the same trigger.
 reset_state

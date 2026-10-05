@@ -21,6 +21,16 @@ function cfg(watchdogVar, pluginVar, defaultVal) {
   return process.env[watchdogVar] ?? process.env[pluginVar] ?? defaultVal;
 }
 
+// Stop hooks gained hookSpecificOutput.additionalContext in Claude Code 2.1.163,
+// rendered as "Stop hook feedback" rather than "Stop hook error". The host sets
+// AI_AGENT=claude-code_<maj>-<min>-<patch>_...; without it, assume an older host.
+function supportsStopContext() {
+  const m = /^claude-code_(\d+)-(\d+)-(\d+)/.exec(process.env.AI_AGENT ?? '');
+  if (!m) return false;
+  const [maj, min, patch] = m.slice(1).map(Number);
+  return maj > 2 || (maj === 2 && (min > 1 || (min === 1 && patch >= 163)));
+}
+
 // parseInt('abc') is NaN, and every comparison against NaN is false - so a typo
 // in a numeric setting used to silently disable the gate it feeds. Fall back to
 // the documented default and say so in the log. Warnings are buffered because
@@ -80,7 +90,7 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta|echo|pending|rules|await)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo|pending|rules|await|brief)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
           } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
@@ -644,7 +654,8 @@ try {
 
   const useLegacyExit2 = cfg('CLAUDE_WATCHDOG_LEGACY_HOOK', 'CLAUDE_PLUGIN_OPTION_legacy_hook', 'false') === 'true';
 
-  log(`TRIGGER: injecting session-analyzer subagent request (mode=${useLegacyExit2 ? 'exit2' : 'json'})`);
+  const mode = useLegacyExit2 ? 'exit2' : supportsStopContext() ? 'context' : 'json';
+  log(`TRIGGER: injecting session-analyzer subagent request (mode=${mode})`);
 
   const safeCwd = (hookCwd || '').replace(/\n/g, '');
   const safeCondensed = CONDENSED_FILE.replace(/\n/g, '');
@@ -655,13 +666,14 @@ try {
   // Backgrounding the analyzer produced a relay that compressed the review to a
   // third of its length, and twice skipped presenting it and acted on a finding
   // instead. Both branches carry the same foreground/verbatim rule. A clean
-  // analysis is already persisted, so relaying it in full only adds noise; the
-  // second rule covers the extra wake-up a backgrounded analyzer causes.
+  // analysis is already persisted, so relaying it in full only adds noise. The
+  // agent can still end up backgrounded; its finish notice must then present the
+  // analysis, not drop it.
   const foreground = `Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
 
-If the analysis has no Efficiency, Quality, or Compliance section and its Recommendations section is "none", it is clean: reply with exactly "✓ watchdog: no findings" and nothing else. Otherwise, present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
+If the analysis has no Efficiency, Quality, or Compliance section and its Recommendations section is "none", it is clean: reply with exactly "✓ Watchdog check successful - nothing to report." and nothing else. Otherwise, present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
 
-If a notice that the analyzer finished arrives after you have already replied, do not repeat or comment on the analysis: reply with exactly "✓".`;
+If a notice that the analyzer finished arrives after you have already presented the analysis or the clean line, do not repeat or comment on it: reply with exactly "✓ Watchdog check already reported.". If you have not presented it yet, apply the rule above to the analysis in the notice now.`;
 
   let postAnalysis;
   if (isInteractive) {
@@ -730,6 +742,20 @@ Use the Agent tool with:
 
 ${postAnalysis}`;
 
+  // Whatever the hook returns is printed in full to the user, so the instruction
+  // goes to a file and the user sees one line. Inline it if the write fails.
+  const BRIEF_FILE = join(SESSIONS_DIR, `brief-${sessionId}.md`);
+  let visible = instruction;
+  try {
+    writeFileSync(BRIEF_FILE, instruction + '\n');
+    const rel = hookCwd ? relative(hookCwd, BRIEF_FILE) : '';
+    const shown = rel && !rel.startsWith('..') && !rel.startsWith('/') ? rel : BRIEF_FILE;
+    visible = `Watchdog is running checks… Read '${shown.replace(/\n/g, '')}' and follow it.`;
+    log(`brief file: ${BRIEF_FILE}`);
+  } catch (err) {
+    log(`BRIEF: write failed (${err.message}), sending the instruction inline`);
+  }
+
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {
     if (/^[A-Za-z0-9_-]+$/.test(cursorResult.uuid)) {
@@ -747,19 +773,22 @@ ${postAnalysis}`;
 
   // Drop the self-owned sentinel just before we block, so the analyzer's resulting
   // Stop (which carries stop_hook_active=true) is recognized as our own echo and
-  // suppressed exactly once. Covers both the JSON-block and legacy exit-2 paths.
+  // suppressed exactly once. Covers every output mode.
   try { writeFileSync(ECHO_FILE, new Date().toISOString() + '\n'); } catch { /* sentinel best-effort; cooldown+cursor+MIN_TOOL_USES still gate the echo */ }
 
   if (HOLD_INPUT === '1' || HOLD_INPUT === 'true') {
     try { writeFileSync(PENDING_FILE, new Date().toISOString() + '\n'); } catch { /* best-effort; without it the hold simply never engages */ }
   }
 
-  if (useLegacyExit2) {
-    process.stderr.write(instruction + '\n');
+  if (mode === 'exit2') {
+    process.stderr.write(visible + '\n');
     process.exit(2);
   }
 
-  process.stdout.write(JSON.stringify({ decision: 'block', reason: instruction }));
+  const out = mode === 'context'
+    ? { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: visible } }
+    : { decision: 'block', reason: visible };
+  process.stdout.write(JSON.stringify(out));
   process.exit(0);
 } catch (err) {
   try { log(`ERROR: unexpected failure: ${err.message}`); } catch { /* logging itself failed */ }
