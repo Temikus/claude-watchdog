@@ -114,7 +114,7 @@ test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt t
 check: lint test
 
 # Create a release: just release [patch|minor|major]
-release segment="patch":
+release segment="patch": check
     #!/usr/bin/env bash
     set -euo pipefail
     manifest=".claude-plugin/plugin.json"
