@@ -137,6 +137,10 @@ behaviour, not the accidental one.
       block and the todo path.
 - [x] `fix_recommendations` switches the post-analysis instruction to the
       fix block, alone and combined with `interactive_recommendations`.
+- [x] `self_check` blocks once per prompt on a mutating turn, not on its own
+      continuation, a read-only turn, the analyzer echo, or a skip file, and
+      ignores the cooldown and minimum tool uses. A turn starts at the last
+      typed prompt and counts its subagents' edits.
 - [x] Legacy exit-2 mode (`CLAUDE_WATCHDOG_LEGACY_HOOK=true`): instruction on
       stderr, exit 2, nothing on stdout.
 - [x] Log rotation at `CLAUDE_WATCHDOG_LOG_MAX_LINES`, including the

@@ -609,6 +609,125 @@ refute_out "fix-interactive" "watchdog-todo.md"
 pass "fix-recommendations-with-interactive-applies-selection"
 
 # ===========================================================================
+# self_check
+# ===========================================================================
+
+sc_transcript="$TMPROOT/selfcheck.jsonl"
+mk_transcript "$sc_transcript" 1 3 SC
+
+sid=$(new_sid)
+gate_run "$sid" "$sc_transcript" "$PROJ" ""
+assert_outcome "self-check-off" BLOCK
+refute_out "self-check-off" "would you ship it"
+pass "self-check-off-by-default"
+
+sid=$(new_sid)
+gate_run "$sid" "$sc_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-on" BLOCK
+assert_out "self-check-on" "would you ship it"
+assert_out "self-check-on" "✓ Self-check: no major issues."
+refute_out "self-check-on" "session-analyzer"
+assert_log "self-check-on" "SELF_CHECK: triggering"
+[ "$(cat "$GSESSIONS/selfcheck-$sid")" = "u-SC-3" ] || fail "self-check-on" "sentinel does not hold the prompt uuid"
+pass "self-check-blocks-a-mutating-turn"
+
+# The continuation the self-check caused is not checked again; the analyzer
+# gates decide it as they would without the self-check.
+gate_run "$sid" "$sc_transcript" "$PROJ" "{stop_hook_active:true}" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-continuation" BLOCK
+assert_out "self-check-continuation" "session-analyzer"
+refute_out "self-check-continuation" "would you ship it"
+pass "self-check-continuation-falls-through-to-analyzer"
+
+# A fresh Stop for the same prompt, as when a background task finishes.
+gate_run "$sid" "$sc_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+refute_out "self-check-same-prompt" "would you ship it"
+assert_log "self-check-same-prompt" "SELF_CHECK: skipped, this prompt was already checked"
+pass "self-check-once-per-prompt"
+
+# A new prompt is checked again, even inside the analyzer's cooldown.
+mk_msg user "u-SC-4" "SC user 4" >> "$sc_transcript"
+mk_msg assistant "a-SC-4" "SC assistant 4" >> "$sc_transcript"
+gate_run "$sid" "$sc_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=600
+assert_outcome "self-check-new-prompt" BLOCK
+assert_out "self-check-new-prompt" "would you ship it"
+[ "$(cat "$GSESSIONS/selfcheck-$sid")" = "u-SC-4" ] || fail "self-check-new-prompt" "sentinel not moved to the new prompt"
+pass "self-check-new-prompt-ignores-cooldown"
+
+sid=$(new_sid)
+gate_run "$sid" "$sc_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1 CLAUDE_WATCHDOG_MIN_TOOL_USES=100
+assert_outcome "self-check-small-turn" BLOCK
+assert_out "self-check-small-turn" "would you ship it"
+pass "self-check-ignores-min-tool-uses"
+
+# Only the current turn counts: earlier edits do not make a read-only turn
+# eligible, and the analyzer still runs on the whole delta.
+scro_transcript="$TMPROOT/selfcheck-readonly.jsonl"
+mk_transcript "$scro_transcript" 1 3 SCRO
+{
+  jq -nc '{type:"user",uuid:"u-SCRO-4",message:{content:"just a question"}}'
+  jq -nc '{type:"assistant",uuid:"a-SCRO-4",message:{content:[{type:"text",text:"looking"},{type:"tool_use",id:"t_a-SCRO-4",name:"Bash",input:{command:"cat README.md"}}]}}'
+} >> "$scro_transcript"
+sid=$(new_sid)
+gate_run "$sid" "$scro_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-read-only" BLOCK
+assert_out "self-check-read-only" "session-analyzer"
+refute_out "self-check-read-only" "would you ship it"
+assert_log "self-check-read-only" "SELF_CHECK: skipped, read-only turn"
+pass "self-check-skips-read-only-turn"
+
+# Notifications, hand-backs, compact summaries and command output are user
+# entries too, but only a typed prompt starts a turn.
+scn_transcript="$TMPROOT/selfcheck-notify.jsonl"
+{
+  jq -nc '{type:"user",uuid:"u-SCN-1",origin:{kind:"human"},message:{content:"fix the bug"}}'
+  mk_msg assistant "a-SCN-1" "editing"
+  jq -nc '{type:"user",uuid:"u-SCN-2",origin:{kind:"task-notification"},message:{content:"<task-notification>done</task-notification>"}}'
+  jq -nc '{type:"user",uuid:"u-SCN-3",isMeta:true,origin:{kind:"peer"},message:{content:"Another Claude session sent a message"}}'
+  jq -nc '{type:"user",uuid:"u-SCN-4",isCompactSummary:true,message:{content:"This session is being continued"}}'
+  jq -nc '{type:"user",uuid:"u-SCN-5",message:{content:"<local-command-stdout>Compacted</local-command-stdout>"}}'
+  jq -nc '{type:"assistant",uuid:"a-SCN-5",message:{content:[{type:"text",text:"noted"}]}}'
+} > "$scn_transcript"
+sid=$(new_sid)
+gate_run "$sid" "$scn_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-notification" BLOCK
+assert_out "self-check-notification" "would you ship it"
+[ "$(cat "$GSESSIONS/selfcheck-$sid")" = "u-SCN-1" ] || fail "self-check-notification" "turn did not start at the typed prompt"
+pass "self-check-turn-starts-at-typed-prompt"
+
+# Edits a subagent made count toward the turn that dispatched it.
+scs_transcript="$TMPROOT/selfcheck-sub.jsonl"
+{
+  jq -nc '{type:"user",uuid:"u-SCS-1",origin:{kind:"human"},message:{content:"delegate it"}}'
+  jq -nc '{type:"assistant",uuid:"a-SCS-1",message:{content:[{type:"tool_use",id:"t_SCS",name:"Agent",input:{prompt:"do it"}}]}}'
+  jq -nc '{type:"user",uuid:"r-SCS-1",message:{content:[{type:"tool_result",tool_use_id:"t_SCS",content:"done"}]},toolUseResult:{status:"completed",agentId:"aSCS1"}}'
+  jq -nc '{type:"assistant",uuid:"a-SCS-2",message:{content:[{type:"text",text:"the subagent did it"}]}}'
+} > "$scs_transcript"
+sid=$(new_sid)
+gate_run "$sid" "$scs_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+refute_out "self-check-subagent-missing" "would you ship it"
+assert_log "self-check-subagent-missing" "SELF_CHECK: skipped, read-only turn"
+mkdir -p "$TMPROOT/selfcheck-sub/subagents"
+mk_msg assistant "s-SCS-1" "subagent editing" > "$TMPROOT/selfcheck-sub/subagents/agent-aSCS1.jsonl"
+sid=$(new_sid)
+gate_run "$sid" "$scs_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-subagent" BLOCK
+assert_out "self-check-subagent" "would you ship it"
+assert_log "self-check-subagent" "SELF_CHECK: triggering (edits=1 "
+pass "self-check-counts-subagent-edits"
+
+sid=$(new_sid)
+: > "$GSESSIONS/echo-$sid"
+gate_run "$sid" "$sc_transcript" "$PROJ" "{stop_hook_active:true}" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-analyzer-echo" SKIP
+pass "self-check-skips-analyzer-echo"
+
+sid=$(new_sid)
+gate_run "$sid" "$sc_transcript" "$skipproj" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+assert_outcome "self-check-skip-file" SKIP
+pass "self-check-honours-skip-file"
+
+# ===========================================================================
 # Legacy exit-2 mode
 # ===========================================================================
 

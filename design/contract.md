@@ -124,6 +124,7 @@ Then, in order:
 | 7 | Session cron | `SKIP_WITH_BG` truthy and some `session_crons[].prompt` matches `/analyze-session\|session-analyzer/i` | `SKIP: analysis already scheduled via session cron` |
 | 8 | Skip file | `<cwd>/.claude-watchdog-skip` exists | `SKIP: disabled via .claude-watchdog-skip in <cwd>` |
 | 9 | Storage resolution | never skips; picks `SESSIONS_DIR` (section 6.1) | `LOCAL_STORAGE: ...` |
+| 9a | Self-check | only with `SELF_CHECK` truthy and `stop_hook_active !== true`: the turn since the last typed prompt (`origin.kind` `human` when present; never `isMeta`, a compact summary, local-command output or a task notification) has an edit or mutating Bash, counting the transcripts in `<transcript>/subagents/agent-<toolUseResult.agentId>.jsonl` it dispatched, nested ones included, and `selfcheck-<sid>` does not already hold that message's uuid. **Triggers instead of skipping**: writes the uuid and `brief-selfcheck-<sid>.md`, emits the block, exits. Otherwise falls through | `SELF_CHECK: triggering ...` / `SELF_CHECK: skipped, ...` |
 | 10 | Marker | `mkdir(MARKER)` fails with `EEXIST` | `SKIP: concurrent run already in progress for <sid>` |
 | 11 | Transcript | `transcript_path` empty or missing on disk | `SKIP: transcript not found at '<path>'` |
 | 12 | Cursor | never skips; reads and validates the cursor (section 6.2) | `CURSOR: ...` |
@@ -277,6 +278,7 @@ Every other `cfg()` call site is **[UNTESTED]** for precedence.
 | Local session storage | `CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE` | `CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE` | `1` | bool |
 | Interactive recommendations | `CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS` | `CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS` | `0` | bool |
 | Fix recommendations | `CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS` | `CLAUDE_PLUGIN_OPTION_FIX_RECOMMENDATIONS` | `0` | bool |
+| Self-check | `CLAUDE_WATCHDOG_SELF_CHECK` | `CLAUDE_PLUGIN_OPTION_SELF_CHECK` | `0` | bool |
 | Skip with background tasks | `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` | `CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS` | `1` | bool |
 | Hold input | `CLAUDE_WATCHDOG_HOLD_INPUT` | `CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS` | `0` | bool |
 | Enforce subagent model | `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `CLAUDE_PLUGIN_OPTION_ENFORCE_SUBAGENT_MODEL` | `0` | bool |
@@ -525,9 +527,11 @@ All names below live in `SESSIONS_DIR` unless stated otherwise.
 | `delta-<session_id>.tmp` | file | The raw transcript slice, verbatim, joined with `\n` |
 | `condensed-<session_id>.txt` | file | The condensed transcript handed to the analyzer |
 | `brief-<session_id>.md` | file | The instruction Claude reads on trigger (section 7.3) |
+| `brief-selfcheck-<session_id>.md` | file | The self-check instruction (gate 9a) |
 | `raw-<session_id>.txt` | file | **Never written by the current code.** See below |
 | `echo-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Echo sentinel |
 | `pending-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Input-hold sentinel |
+| `selfcheck-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | uuid of the last self-checked prompt |
 
 **Cursor file.** Written as:
 
@@ -629,7 +633,7 @@ rotating again.
 `cleanupSessionsDir(dir)` runs over `GLOBAL_SESSIONS_DIR` on every invocation and
 over the local sessions directory when one is used. For each entry:
 
-- A **file** matching `^(condensed|raw|delta|echo|pending|rules|await|brief)-` older than 120
+- A **file** matching `^(condensed|raw|delta|echo|pending|rules|await|brief|selfcheck)-` older than 120
   minutes by mtime is deleted.
 - A **file** matching `^cursor-` older than `CURSOR_TTL_DAYS` days is deleted.
 - A **directory** older than 120 minutes by mtime is `rmdir`ed. A non-empty

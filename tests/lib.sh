@@ -70,7 +70,7 @@ run_stop() {
 # it names no brief (the inline fallback). A relative path is relative to <cwd>.
 brief_text() {
   local visible="$1" cwd="$2" path
-  path=$(printf '%s' "$visible" | sed -n "s/^Watchdog is running checks… Read '\(.*\)' and follow it\.$/\1/p")
+  path=$(printf '%s' "$visible" | sed -n -E "s/^Watchdog (is running checks|self-check)… Read '(.*)' and follow it\.$/\2/p")
   if [ -z "$path" ]; then printf '%s' "$visible"; return; fi
   case "$path" in /*) ;; *) path="$cwd/$path" ;; esac
   cat "$path" 2>/dev/null || true

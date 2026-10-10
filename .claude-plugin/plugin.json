@@ -69,6 +69,12 @@
       "description": "After presenting the analysis, have Claude apply its [code] recommendations in the same turn. [instruction] items are drafted, not written to rule files, and nothing is committed. With interactive recommendations on, only the items you select are applied. Default is false",
       "default": false
     },
+    "self_check": {
+      "type": "boolean",
+      "title": "Self-check each turn",
+      "description": "When a turn that changed files or ran mutating commands ends, ask Claude whether it would ship the work as it is, and to fix only major problems if not. At most once per prompt; ignores the cooldown and minimum tool calls. Default is false",
+      "default": false
+    },
     "skip_with_background_tasks": {
       "type": "boolean",
       "title": "Skip while background tasks run",

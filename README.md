@@ -85,6 +85,7 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - No background tasks are in flight (subagents, shell jobs, workflows) - a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
 - No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) - avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
 - No `.claude-watchdog-skip` file exists in the session's working directory
+- If **Self-check each turn** is on and this Stop ends an unchecked prompt whose turn changed something, the self-check runs instead and the post-mortem waits for the next Stop (see [Self-checking each turn](#self-checking-each-turn))
 - No other watchdog run holds the per-session marker directory (a concurrency lock, released when the run exits)
 - Transcript exists at the path the event gives
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
@@ -115,6 +116,7 @@ with `/plugin configure claude-watchdog`:
 | Enforce pinned subagent models | `false` | Block a `Task`/`Agent` dispatch that names an agent whose definition pins a `model:` but passes no explicit `model` |
 | Wake on bot reviews and CI | `false` | After a `git push` / `gh pr create` on a branch with an open PR, wake Claude once checks settle with failures and new bot comments (see below) |
 | Fix recommendations | `false` | After presenting the analysis, Claude applies its `[code]` recommendations in the same turn. `[instruction]` items are drafted, not written, and nothing is committed. With interactive recommendations on, only the selected items are applied |
+| Self-check each turn | `false` | At the end of a turn that changed something, ask Claude whether it would ship the work as it is, and to fix only major problems if not (see below) |
 
 ### Environment variable overrides
 
@@ -133,6 +135,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_ENFORCE_SUBAGENT_MODEL` | `0` | Set to `1` to block a `Task`/`Agent` dispatch that ignores an agent's pinned model (see below) |
 | `CLAUDE_WATCHDOG_AWAIT_REVIEWS` | `0` | Set to `1` to wake Claude when bot reviews and CI settle after a push (see below) |
 | `CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS` | `0` | Set to `1` to have Claude apply the analysis's recommendations after presenting it |
+| `CLAUDE_WATCHDOG_SELF_CHECK` | `0` | Set to `1` to have Claude self-check each turn that changed something (see below) |
 
 ### Advanced overrides
 
@@ -176,6 +179,31 @@ Two caveats: a prompt that lands in the instant between the analyzer finishing a
 Claude presenting the analysis is not held (the analysis is already persisted to
 the analyses directory at that point), and the hook adds one Node cold-start
 (~30–80 ms) to every prompt submission while the plugin is installed.
+
+### Self-checking each turn
+
+The post-mortem runs at most every 10 minutes and only on larger slices. With
+**Self-check each turn** enabled, the Stop hook also asks Claude, at the end of
+every turn that edited a file or ran a mutating shell command, whether it would
+ship the work as it is. If not, Claude names the problem in one sentence and
+fixes it. The bar is set high: a gap in what was asked, a bug, or a design
+choice it already regrets, not style or polish. A clean turn ends with
+`✓ Self-check: no major issues.`
+
+- It runs at most once per prompt. The continuation it causes is not checked
+  again, and the post-mortem gates then apply as usual, so with both on the
+  analyzer reviews the fixed turn.
+- A turn runs from the last prompt you typed. Task notifications and subagent
+  hand-backs do not start a new one, and edits made by subagents the turn
+  dispatched count as its own. With **Skip while background tasks run** off, a
+  background subagent's edits that land after the check are not reviewed.
+- Only the current turn counts: a read-only reply after an editing turn is not
+  checked.
+- It ignores the cooldown and minimum tool calls. It honours `disabled`,
+  `.claude-watchdog-skip`, and the background-task gate.
+- It is self-review, run by the same model in the same context. It costs one
+  extra turn, but shares the model's blind spots; the analyzer stays the
+  independent check.
 
 ### Enforcing pinned subagent models
 
