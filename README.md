@@ -85,7 +85,7 @@ Only when **all** of these are true — otherwise it exits silently and Claude s
 - No background tasks are in flight (subagents, shell jobs, workflows) - a paused session isn't a finished one, so analysis waits for the next clean stop (unless disabled; requires Claude Code ≥ 2.1.145, no-op on older versions)
 - No session cron is already scheduled to run the analyzer (e.g. a `/loop /analyze-session`) - avoids doubling up. Gated by the **same** `CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS` flag as the background-task check, so disabling that flag re-enables this case too
 - No `.claude-watchdog-skip` file exists in the session's working directory
-- If **Self-check each turn** is on and this Stop ends an unchecked prompt whose turn changed something, the self-check runs instead and the post-mortem waits for the next Stop (see [Self-checking each turn](#self-checking-each-turn))
+- If **Self-check each turn** is on and this Stop ends an unchecked prompt whose turn changed something, the self-check runs instead and the post-mortem waits for the next Stop (see [Self-checking each turn](#self-checking-each-turn)). The conditions below, including the cooldown and minimum tool calls, apply to the post-mortem only
 - No other watchdog run holds the per-session marker directory (a concurrency lock, released when the run exits)
 - Transcript exists at the path the event gives
 - At least the configured cooldown (default 600s) has elapsed since the last analysis for this session
