@@ -92,9 +92,9 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta|echo|pending|rules|await|brief|selfcheck)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo|pending|rules|await|brief)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
-          } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
+          } else if (/^(cursor|selfcheck)-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
           }
         } else if (entry.isDirectory()) {

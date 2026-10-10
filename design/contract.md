@@ -633,9 +633,9 @@ rotating again.
 `cleanupSessionsDir(dir)` runs over `GLOBAL_SESSIONS_DIR` on every invocation and
 over the local sessions directory when one is used. For each entry:
 
-- A **file** matching `^(condensed|raw|delta|echo|pending|rules|await|brief|selfcheck)-` older than 120
+- A **file** matching `^(condensed|raw|delta|echo|pending|rules|await|brief)-` older than 120
   minutes by mtime is deleted.
-- A **file** matching `^cursor-` older than `CURSOR_TTL_DAYS` days is deleted.
+- A **file** matching `^(cursor|selfcheck)-` older than `CURSOR_TTL_DAYS` days is deleted.
 - A **directory** older than 120 minutes by mtime is `rmdir`ed. A non-empty
   directory fails and is left alone. This is what expires a stale marker.
 

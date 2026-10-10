@@ -645,6 +645,13 @@ refute_out "self-check-same-prompt" "would you ship it"
 assert_log "self-check-same-prompt" "SELF_CHECK: skipped, this prompt was already checked"
 pass "self-check-once-per-prompt"
 
+# The sentinel outlives the two-hour cleanup, so a long idle can't re-check.
+set_mtime "$GSESSIONS/selfcheck-$sid" 10800
+gate_run "$sid" "$sc_transcript" "$PROJ" "" CLAUDE_WATCHDOG_SELF_CHECK=1
+refute_out "self-check-idle" "would you ship it"
+[ -f "$GSESSIONS/selfcheck-$sid" ] || fail "self-check-idle" "sentinel removed by cleanup"
+pass "self-check-sentinel-survives-cleanup"
+
 # A new prompt is checked again, even inside the analyzer's cooldown.
 mk_msg user "u-SC-4" "SC user 4" >> "$sc_transcript"
 mk_msg assistant "a-SC-4" "SC assistant 4" >> "$sc_transcript"
