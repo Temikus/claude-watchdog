@@ -57,6 +57,7 @@ const COOLDOWN_SECONDS = intCfg('COOLDOWN_SECONDS', cfg('CLAUDE_WATCHDOG_COOLDOW
 const LOCAL_STORAGE = cfg('CLAUDE_WATCHDOG_LOCAL_SESSION_STORAGE', 'CLAUDE_PLUGIN_OPTION_LOCAL_SESSION_STORAGE', '1');
 const INTERACTIVE_RECS = cfg('CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_INTERACTIVE_RECOMMENDATIONS', '0');
 const FIX_RECS = cfg('CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS', 'CLAUDE_PLUGIN_OPTION_FIX_RECOMMENDATIONS', '0');
+const SELF_CHECK = cfg('CLAUDE_WATCHDOG_SELF_CHECK', 'CLAUDE_PLUGIN_OPTION_SELF_CHECK', '0');
 const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
 const HOLD_INPUT = cfg('CLAUDE_WATCHDOG_HOLD_INPUT', 'CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS', '0');
 const INCLUDE_RULES = cfg('CLAUDE_WATCHDOG_INCLUDE_RULES', 'CLAUDE_PLUGIN_OPTION_INCLUDE_RULES', '1');
@@ -93,7 +94,7 @@ function cleanupSessionsDir(dir) {
           const age = now - statSync(full).mtimeMs;
           if (/^(condensed|raw|delta|echo|pending|rules|await|brief)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
-          } else if (/^cursor-/.test(entry.name) && age > cursorTtlMs) {
+          } else if (/^(cursor|selfcheck)-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
           }
         } else if (entry.isDirectory()) {
@@ -352,6 +353,93 @@ function instructionFiles(rootDir, outDir, sessionId) {
   return out;
 }
 
+// A prompt the user typed. Task notifications, subagent hand-backs, compact
+// summaries and command output are user entries too. Newer transcripts mark
+// typed prompts with origin.kind 'human'; older ones carry no origin.
+function isPrompt(obj) {
+  if (!isUserMessage(obj) || obj.isMeta || obj.isCompactSummary) return false;
+  if (obj.origin) return obj.origin.kind === 'human';
+  const c = obj.message.content;
+  const text = typeof c === 'string' ? c : c.find(b => b.type === 'text')?.text ?? '';
+  return !/^\s*<(local-command-|task-notification)/.test(text);
+}
+
+// The entries since the last typed prompt, and that prompt's uuid. Scans from
+// the end and parses only candidate lines, since this runs on every Stop while
+// the self-check is on.
+function currentTurn(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"type":"user"')) continue;
+    let obj;
+    try { obj = JSON.parse(lines[i]); } catch { continue; }
+    if (isPrompt(obj)) return { uuid: obj.uuid ?? null, entries: parseLines(lines.slice(i)) };
+  }
+  return null;
+}
+
+// Entries of the subagents this turn dispatched, nested ones included. They are
+// in <transcript>/subagents/agent-<id>.jsonl; the main session answers for them.
+function subagentEntries(transcriptPath, entries) {
+  const dir = join(transcriptPath.replace(/\.jsonl$/, ''), 'subagents');
+  const seen = new Set();
+  const out = [];
+  const queue = [entries];
+  while (queue.length) {
+    for (const obj of queue.pop()) {
+      const id = obj.toolUseResult?.agentId;
+      if (typeof id !== 'string' || !/^[\w-]+$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      let sub;
+      try { sub = parseLines(readFileSync(join(dir, `agent-${id}.jsonl`), 'utf8').split('\n')); } catch { continue; }
+      out.push(...sub);
+      queue.push(sub);
+    }
+  }
+  return out;
+}
+
+const SELF_CHECK_PROMPT = `Before you hand this turn back, take an honest look at the work itself. If this were going out the door now, would you ship it as it is, or is there something you would want to fix first?
+
+Judge the whole turn, including anything your subagents changed, as a careful engineer would judge their own change before merging. Does it do what the user asked? Does it work? Is there a problem with the approach that you can already see will cause trouble later?
+
+Set the bar high. A fix is worth making only if leaving it would matter: a gap in what was asked, a bug, a design choice you already regret. Style, naming, polish, and ideas for later are not reasons to hold the work back, and this is not the moment to grow the scope.
+
+If you would ship it, reply with exactly "✓ Self-check: no major issues." and nothing more.
+
+If you would not, say in one sentence what you would fix, then fix it. Where the fix needs the user's judgement, or an action others will see (a push, a publish, a delete), ask rather than act. If you ended the turn with a question for the user, leave it for them to answer.`;
+
+// Whatever the hook returns is printed in full to the user, so the instruction
+// goes to a file and the user sees one line. Inline it if the write fails.
+function writeBrief(file, instruction, label, hookCwd) {
+  try {
+    writeFileSync(file, instruction + '\n');
+    const rel = hookCwd ? relative(hookCwd, file) : '';
+    const shown = rel && !rel.startsWith('..') && !rel.startsWith('/') ? rel : file;
+    log(`brief file: ${file}`);
+    return `${label} Read '${shown.replace(/\n/g, '')}' and follow it.`;
+  } catch (err) {
+    log(`BRIEF: write failed (${err.message}), sending the instruction inline`);
+    return instruction;
+  }
+}
+
+function outputMode() {
+  const useLegacyExit2 = cfg('CLAUDE_WATCHDOG_LEGACY_HOOK', 'CLAUDE_PLUGIN_OPTION_legacy_hook', 'false') === 'true';
+  return useLegacyExit2 ? 'exit2' : supportsStopContext() ? 'context' : 'json';
+}
+
+function emit(visible, mode) {
+  if (mode === 'exit2') {
+    process.stderr.write(visible + '\n');
+    process.exit(2);
+  }
+  const out = mode === 'context'
+    ? { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: visible } }
+    : { decision: 'block', reason: visible };
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+}
+
 let markerDir = null;
 let deltaFile = null;
 
@@ -506,6 +594,32 @@ try {
     }
   }
 
+  // At most one self-check per user prompt. A Stop-hook continuation is never
+  // checked, and the sentinel holds the checked prompt's uuid, because a finished
+  // background task re-fires Stop for the same prompt. When the self-check skips,
+  // the analyzer gates below run as usual.
+  if ((SELF_CHECK === '1' || SELF_CHECK === 'true') && event.stop_hook_active !== true
+      && transcriptPath && existsSync(transcriptPath)) {
+    const SELF_CHECK_FILE = join(GLOBAL_SESSIONS_DIR, `selfcheck-${sessionId}`);
+    const turn = currentTurn(readFileSync(transcriptPath, 'utf8').split('\n'));
+    let checked = '';
+    try { checked = readFileSync(SELF_CHECK_FILE, 'utf8').trim(); } catch { /* none yet */ }
+    const turnStats = turn ? deltaStats([...turn.entries, ...subagentEntries(transcriptPath, turn.entries)], null) : null;
+    if (!turn || !turn.uuid) {
+      log('SELF_CHECK: skipped, no user message in the transcript');
+    } else if (checked === turn.uuid) {
+      log('SELF_CHECK: skipped, this prompt was already checked');
+    } else if (turnStats.edits === 0 && turnStats.mutatingBash === 0) {
+      log('SELF_CHECK: skipped, read-only turn');
+    } else {
+      const mode = outputMode();
+      log(`SELF_CHECK: triggering (edits=${turnStats.edits} mutating_bash=${turnStats.mutatingBash} mode=${mode})`);
+      try { writeFileSync(SELF_CHECK_FILE, turn.uuid + '\n'); } catch { /* best-effort; stop_hook_active still prevents a loop */ }
+      const visible = writeBrief(join(SESSIONS_DIR, `brief-selfcheck-${sessionId}.md`), SELF_CHECK_PROMPT, 'Watchdog self-check…', hookCwd);
+      emit(visible, mode);
+    }
+  }
+
   // The cursor and the lock are per session, not per project root. A session that
   // moves into a git worktree gets a new root (the worktree's own .git file), and
   // keeping them under that root lost the cursor and re-analysed the whole session.
@@ -653,9 +767,7 @@ try {
   const condensedSize = Buffer.byteLength(condensedContent, 'utf8');
   log(`condensed file: ${CONDENSED_FILE} (${condensedSize} bytes)`);
 
-  const useLegacyExit2 = cfg('CLAUDE_WATCHDOG_LEGACY_HOOK', 'CLAUDE_PLUGIN_OPTION_legacy_hook', 'false') === 'true';
-
-  const mode = useLegacyExit2 ? 'exit2' : supportsStopContext() ? 'context' : 'json';
+  const mode = outputMode();
   log(`TRIGGER: injecting session-analyzer subagent request (mode=${mode})`);
 
   const safeCwd = (hookCwd || '').replace(/\n/g, '');
@@ -769,19 +881,7 @@ Use the Agent tool with:
 
 ${postAnalysis}`;
 
-  // Whatever the hook returns is printed in full to the user, so the instruction
-  // goes to a file and the user sees one line. Inline it if the write fails.
-  const BRIEF_FILE = join(SESSIONS_DIR, `brief-${sessionId}.md`);
-  let visible = instruction;
-  try {
-    writeFileSync(BRIEF_FILE, instruction + '\n');
-    const rel = hookCwd ? relative(hookCwd, BRIEF_FILE) : '';
-    const shown = rel && !rel.startsWith('..') && !rel.startsWith('/') ? rel : BRIEF_FILE;
-    visible = `Watchdog is running checks… Read '${shown.replace(/\n/g, '')}' and follow it.`;
-    log(`brief file: ${BRIEF_FILE}`);
-  } catch (err) {
-    log(`BRIEF: write failed (${err.message}), sending the instruction inline`);
-  }
+  const visible = writeBrief(join(SESSIONS_DIR, `brief-${sessionId}.md`), instruction, 'Watchdog is running checks…', hookCwd);
 
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {
@@ -807,16 +907,7 @@ ${postAnalysis}`;
     try { writeFileSync(PENDING_FILE, new Date().toISOString() + '\n'); } catch { /* best-effort; without it the hold simply never engages */ }
   }
 
-  if (mode === 'exit2') {
-    process.stderr.write(visible + '\n');
-    process.exit(2);
-  }
-
-  const out = mode === 'context'
-    ? { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: visible } }
-    : { decision: 'block', reason: visible };
-  process.stdout.write(JSON.stringify(out));
-  process.exit(0);
+  emit(visible, mode);
 } catch (err) {
   try { log(`ERROR: unexpected failure: ${err.message}`); } catch { /* logging itself failed */ }
   process.exit(0);
