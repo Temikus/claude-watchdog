@@ -416,7 +416,7 @@ function writeBrief(file, instruction, label) {
   try {
     writeFileSync(file, instruction + '\n');
     log(`brief file: ${file}`);
-    return `${label} Use the Read tool on '${file.replace(/\n/g, '')}' and follow it.`;
+    return `${label} Use the Read tool on '${resolve(file).replace(/\n/g, '')}' and follow it.`;
   } catch (err) {
     log(`BRIEF: write failed (${err.message}), sending the instruction inline`);
     return instruction;
