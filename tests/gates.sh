@@ -752,7 +752,7 @@ legacy_out=$(printf '%s' "$(stop_payload "$sid" "$sr_transcript" "$PROJ")" | env
 [ -z "$legacy_out" ] || fail "legacy-exit2" "expected empty stdout, got: $legacy_out"
 grep -q '^Watchdog is running checks' "$legacy_err" || fail "legacy-exit2" "status line not on stderr"
 grep -q '"decision"' "$legacy_err" && fail "legacy-exit2" "stderr should carry the bare status line, not JSON"
-brief_text "$(cat "$legacy_err")" "$PROJ" | grep -q 'Please spawn a session-analyzer agent' \
+brief_text "$(cat "$legacy_err")" | grep -q 'Please spawn a session-analyzer agent' \
   || fail "legacy-exit2" "stderr does not name a brief holding the instruction"
 assert_log "legacy-exit2" "TRIGGER: injecting session-analyzer subagent request (mode=exit2)"
 pass "legacy-exit2-status-line-on-stderr"
@@ -779,7 +779,7 @@ for case in "claude-code_2-1-163_harness|context" "claude-code_3-0-0_cli|context
       || fail "$label" "expected decision:block, got: $STOP_OUT"
   fi
   [ "$(printf '%s\n' "$STOP_VISIBLE" | wc -l | tr -d ' ')" = 1 ] || fail "$label" "visible text is not one line: $STOP_VISIBLE"
-  case "$STOP_VISIBLE" in "Watchdog is running checks… Read '"*) ;; *) fail "$label" "unexpected visible text: $STOP_VISIBLE" ;; esac
+  case "$STOP_VISIBLE" in "Watchdog is running checks… Use the Read tool on '/"*) ;; *) fail "$label" "unexpected visible text: $STOP_VISIBLE" ;; esac
   assert_out "$label" "Please spawn a session-analyzer agent"
 done
 pass "output-channel-follows-host-version"

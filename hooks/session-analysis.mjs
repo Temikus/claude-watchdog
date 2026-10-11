@@ -410,13 +410,13 @@ If you would not, say in one sentence what you would fix, then fix it. Where the
 
 // Whatever the hook returns is printed in full to the user, so the instruction
 // goes to a file and the user sees one line. Inline it if the write fails.
-function writeBrief(file, instruction, label, hookCwd) {
+// Name the tool and the absolute path: given a relative path, Claude once read it
+// through Bash with a guessed fallback, and auto mode denied that for the session.
+function writeBrief(file, instruction, label) {
   try {
     writeFileSync(file, instruction + '\n');
-    const rel = hookCwd ? relative(hookCwd, file) : '';
-    const shown = rel && !rel.startsWith('..') && !rel.startsWith('/') ? rel : file;
     log(`brief file: ${file}`);
-    return `${label} Read '${shown.replace(/\n/g, '')}' and follow it.`;
+    return `${label} Use the Read tool on '${file.replace(/\n/g, '')}' and follow it.`;
   } catch (err) {
     log(`BRIEF: write failed (${err.message}), sending the instruction inline`);
     return instruction;
@@ -615,7 +615,7 @@ try {
       const mode = outputMode();
       log(`SELF_CHECK: triggering (edits=${turnStats.edits} mutating_bash=${turnStats.mutatingBash} mode=${mode})`);
       try { writeFileSync(SELF_CHECK_FILE, turn.uuid + '\n'); } catch { /* best-effort; stop_hook_active still prevents a loop */ }
-      const visible = writeBrief(join(SESSIONS_DIR, `brief-selfcheck-${sessionId}.md`), SELF_CHECK_PROMPT, 'Watchdog self-check…', hookCwd);
+      const visible = writeBrief(join(SESSIONS_DIR, `brief-selfcheck-${sessionId}.md`), SELF_CHECK_PROMPT, 'Watchdog self-check…');
       emit(visible, mode);
     }
   }
@@ -881,7 +881,7 @@ Use the Agent tool with:
 
 ${postAnalysis}`;
 
-  const visible = writeBrief(join(SESSIONS_DIR, `brief-${sessionId}.md`), instruction, 'Watchdog is running checks…', hookCwd);
+  const visible = writeBrief(join(SESSIONS_DIR, `brief-${sessionId}.md`), instruction, 'Watchdog is running checks…');
 
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {

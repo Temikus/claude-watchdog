@@ -63,16 +63,15 @@ run_stop() {
   STOP_OUT=$(printf '%s' "$payload" | env ${1+"$@"} "${HOOK_STOP_CMD[@]}" 2>/dev/null) || STOP_RC=$?
   STOP_VISIBLE=$(printf '%s' "$STOP_OUT" | jq -r '.reason // .hookSpecificOutput.additionalContext // empty' 2>/dev/null || true)
   # shellcheck disable=SC2034
-  STOP_TEXT=$(brief_text "$STOP_VISIBLE" "$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null || true)" || true)
+  STOP_TEXT=$(brief_text "$STOP_VISIBLE" || true)
 }
 
-# brief_text <visible> <cwd> - the brief file's content, or <visible> itself when
-# it names no brief (the inline fallback). A relative path is relative to <cwd>.
+# brief_text <visible> - the brief file's content, or <visible> itself when it
+# names no brief (the inline fallback).
 brief_text() {
-  local visible="$1" cwd="$2" path
-  path=$(printf '%s' "$visible" | sed -n -E "s/^Watchdog (is running checks|self-check)… Read '(.*)' and follow it\.$/\2/p")
+  local visible="$1" path
+  path=$(printf '%s' "$visible" | sed -n -E "s/^Watchdog (is running checks|self-check)… Use the Read tool on '(.*)' and follow it\.$/\2/p")
   if [ -z "$path" ]; then printf '%s' "$visible"; return; fi
-  case "$path" in /*) ;; *) path="$cwd/$path" ;; esac
   cat "$path" 2>/dev/null || true
 }
 

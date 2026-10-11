@@ -719,11 +719,10 @@ returns only one line, because Claude Code prints every Stop-hook channel to the
 user in full:
 
 ```
-Watchdog is running checks… Read '<brief path>' and follow it.
+Watchdog is running checks… Use the Read tool on '<brief path>' and follow it.
 ```
 
-`<brief path>` is relative to the event `cwd` when the brief sits under it,
-otherwise absolute. If the brief write fails, the full instruction is sent in
+`<brief path>` is always absolute. If the brief write fails, the full instruction is sent in
 its place. The output channel depends on the host:
 
 - `AI_AGENT` names Claude Code ≥ 2.1.163: `{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":<line>}}`, logged as `mode=context`.

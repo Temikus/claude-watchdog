@@ -195,6 +195,16 @@ grep -q "LOCAL_STORAGE: using project-local path $FAKE_HOME/repo/.claude/tmp/cla
   || { cat "$LOG"; fail "project-root-git" "storage not anchored to the repo root"; }
 pass "project-root-anchors-at-git"
 
+# --- Test 11a: a brief under the cwd is still named by its absolute path ---
+new_log
+sid="cfg-brief-abs-$$"
+run_stop "$(stop_payload "$sid" "$TRANSCRIPT" "$FAKE_HOME/repo")" \
+  HOME="$FAKE_HOME" CLAUDE_WATCHDOG_TMP="$GTMP" CLAUDE_WATCHDOG_ANALYSES_DIR="$ANALYSES" \
+  CLAUDE_WATCHDOG_LOG="$LOG" CLAUDE_WATCHDOG_MIN_TOOL_USES=3 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=0
+want="Watchdog is running checks… Use the Read tool on '$FAKE_HOME/repo/.claude/tmp/claude-watchdog/sessions/brief-$sid.md' and follow it."
+[ "$STOP_VISIBLE" = "$want" ] || { cat "$LOG"; fail "brief-absolute" "got: $STOP_VISIBLE"; }
+pass "brief-path-absolute-under-cwd"
+
 # --- Test 12: the walk stops at $HOME - a marker in $HOME never wins ---
 new_log
 mkdir -p "$FAKE_HOME/.git" "$FAKE_HOME/loose/dir"
