@@ -66,6 +66,11 @@ test-await-reviews:
 test-perf:
     bash tests/perf.sh
 
+# Light-mode spike mod (not part of `just test`: needs the `claude` binary)
+test-lite:
+    claude plugin validate spike/lite
+    claude plugin test spike/lite
+
 # --- rewrite/fixtures block (section 4) -------------------------------------
 
 # Event-dump capture, the sanitiser, and the reconstructed fixtures

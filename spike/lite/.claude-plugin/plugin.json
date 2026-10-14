@@ -1,0 +1,6 @@
+{
+  "name": "watchdog-lite",
+  "version": "0.0.1",
+  "description": "Spike: watchdog checks as a tool-less fork of the main conversation",
+  "author": { "name": "Artem Yakimenko" }
+}

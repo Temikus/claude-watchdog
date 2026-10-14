@@ -1,6 +1,8 @@
 # Spike: mod-based light mode
 
-Drafted 2026-10-14 against Claude Code 2.1.296. Status: proposed, not started.
+Drafted 2026-10-14 against Claude Code 2.1.296. Status: steps 0 and 1 done
+(see Results); steps 2-6 open. Prototype: `spike/lite/`, run with
+`just test-lite` and `claude --plugin-dir spike/lite`.
 
 ## Question
 
@@ -175,6 +177,46 @@ Go only if all hold:
   if unknown 1 shows older builds reject `"modules"`.
 - **D2.** Trigger A only, or A and B?
 - **D3.** Support only first-party API sessions, or also Bedrock/Vertex?
+
+## Results
+
+### Step 0 - probe (2026-10-14)
+
+- **Coexistence on 2.1.296: works.** In a `claude -p --plugin-dir spike/lite`
+  run, the command `Stop` hook and the module's `turn.complete` hook both
+  wrote their log lines.
+- **Older builds: degrade cleanly.** On 2.1.29, `plugin validate` passes, the
+  `"modules"` key is ignored, and the command `Stop` hook still runs. A mode
+  inside `claude-watchdog` would not break older installs (D1).
+- **Test kit: works.** `claude plugin test` answers `model.fork`, `fs.*`,
+  `env.get` and `session.id` from test hooks. A noun call's hook must answer
+  `{ value }`, an event's hook its result. 4 tests in
+  `spike/lite/hooks/register.test.ts`.
+- **New blocker for any rename or new plugin:** 2.1.296's
+  `claude plugin validate` rejects names that start with `claude-` as
+  reserved. That includes `claude-watchdog` itself. The installed plugin still
+  loads, so this is a validator rule today, not a load failure. The spike
+  plugin is named `watchdog-lite` for that reason.
+
+### Step 1 - cost probe (2026-10-14, Haiku main model)
+
+Fork of a fixed one-line prompt, started from `turn.complete`, not awaited:
+
+| Session | Turn cache read / write | Fork cache read / write | Fork latency |
+| --- | --- | --- | --- |
+| 1 step, no tools | 0 / 40,481 | 17,337 / 23,147 | 1.5 s |
+| 4 steps, 3 `Read`s | 49,862 / 89,388 | 101,042 / 326 | 1.8 s |
+
+- After a turn with tool steps, the fork reads almost the whole transcript
+  from cache. Sessions that pass the minimum-tool-calls gate look like the
+  second row.
+- A one-step turn hits only part of the cache. Those turns are under the
+  gate anyway.
+- `claude -p` exits after the turn, yet the un-awaited fork still finished
+  and logged.
+- Still open for unknown 2: the same numbers on Opus and Sonnet main models,
+  and the dollar comparison with the subagent using current prices.
+- Unknown 6 (telemetry off, Bedrock/Vertex) is not tested yet.
 
 ## Out of scope
 
