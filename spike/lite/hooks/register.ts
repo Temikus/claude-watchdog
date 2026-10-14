@@ -33,6 +33,16 @@ async function probe($: Engine, turn: { turnId: string; durationMs: number; usag
 }
 
 export const register: Register = on => {
+  // Step 1 probe: does a module see, and can it strip, a command Stop hook's output?
+  on('classic.Stop', async ($, e, next) => {
+    const result = await next(e)
+    const strip = (await $.env.get('CLAUDE_WATCHDOG_LITE_STRIP')) === '1'
+    await appendLine($, { ts: new Date().toISOString(), kind: 'classic-stop', strip, result })
+    if (!strip) return result
+    const kept = (result.additionalContext ?? []).filter(c => !c.startsWith('PROBE:'))
+    return { ...result, additionalContext: kept }
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId === undefined && !e.isAborted) {

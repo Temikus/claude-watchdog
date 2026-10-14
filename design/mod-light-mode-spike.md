@@ -214,9 +214,48 @@ Fork of a fixed one-line prompt, started from `turn.complete`, not awaited:
   gate anyway.
 - `claude -p` exits after the turn, yet the un-awaited fork still finished
   and logged.
-- Still open for unknown 2: the same numbers on Opus and Sonnet main models,
-  and the dollar comparison with the subagent using current prices.
-- Unknown 6 (telemetry off, Bedrock/Vertex) is not tested yet.
+Same 4-step session on the other main models:
+
+| Main model | Fork cache read / write | Fork latency | Fork cost (probe) |
+| --- | --- | --- | --- |
+| Haiku 5.5 | 101,042 / 326 | 1.8 s | ~$0.001 |
+| Sonnet 5.5 | 100,172 / 618 | 1.5 s | ~$0.022 |
+| Opus 5.5 | 99,813 / 685 | 2.7 s | ~$0.023 |
+
+Prices are from the bundled `claude-api` skill (cached 2026-10-06): cache
+reads $0.20/MTok on Opus 5.5 and Sonnet 5.5, 5-minute writes 1.25x input.
+
+- **Estimate for a real check on Opus 5.5 at ~100k tokens:** the probe cost
+  plus ~8k fresh tokens of rules and diff (~$0.03) and ~1-3k output tokens,
+  thinking included (~$0.02-0.06). Total ~$0.07-0.12. The cache-read part
+  grows linearly with the transcript: ~$0.08 at 400k.
+- **The current path at the same size:** the subagent's ~38k Sonnet tokens
+  (~$0.05-0.10), plus 2-3 extra main-thread requests to read the brief, spawn
+  the agent and repeat the analysis. On Opus that is ~$0.02 of cache reads
+  each. Total ~$0.10-0.17.
+- These are estimates. Step 4 replaces them with measured numbers from the
+  real prompt.
+- Unknown 6 (telemetry off, Bedrock/Vertex) is not tested. D3 makes
+  Bedrock/Vertex out of scope for now.
+
+### Step 1b - can a module see the command Stop hook's output? (2026-10-14)
+
+No, not on this machine. The debug log says
+`watchdog-lite: classic.Stop bypassed by cc-plugin-sec-default (tier user)`.
+The built-in `cc-plugin-sec-default` is seated outermost "on a machine with
+managed settings and for Team and Enterprise organizations". It keeps
+`classic.*`, `prompt.section/context/compose`, `tool.*`, `agent.*`,
+`settings.read` and `plugin.register` out of reach of user-installed modules.
+`turn.*`, `session.*`, `ui.render`, `model.*`, `prompt.submit`, `$.fs`,
+`$.process` and `$.store` still reach the module. So a design that rewrites
+the Stop hook's output from a module does not work for managed or Enterprise
+users.
+
+## Decisions (2026-10-14)
+
+- **D1:** ship inside `claude-watchdog`, as an opt-in config option.
+- **D2:** trigger A only (after each turn).
+- **D3:** first-party API only for now.
 
 ## Out of scope
 

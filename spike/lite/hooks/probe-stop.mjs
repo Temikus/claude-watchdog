@@ -20,4 +20,12 @@ appendFileSync(log, JSON.stringify({
   ts: new Date().toISOString(),
   kind: 'command-stop',
   sessionId: event.session_id ?? null,
+  stopHookActive: event.stop_hook_active === true,
 }) + '\n');
+
+// Step 1 probe: a context entry the module should see, and may strip.
+if (event.stop_hook_active !== true) {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'Stop', additionalContext: 'PROBE: reply with the word probed.' },
+  }));
+}
