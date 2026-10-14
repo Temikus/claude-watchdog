@@ -1,8 +1,14 @@
 # Spike: mod-based light mode
 
-Drafted 2026-10-14 against Claude Code 2.1.296. Status: steps 0 and 1 done
-(see Results); steps 2-6 open. Prototype: `spike/lite/`, run with
-`just test-lite` and `claude --plugin-dir spike/lite`.
+Drafted 2026-10-14 against Claude Code 2.1.296. Status: steps 0-3 done.
+Light mode ships as the opt-in `light_mode` option (`hooks/light-mode.tsx`,
+README "Light mode"); the `spike/lite/` prototype is removed. Step 4, the
+side-by-side run with `light_mode: both`, is next.
+
+The design changed after step 1b (below): the Stop hook hands each review to
+the module through `light-<session>.json` in a shared directory, and the
+module marks itself alive each turn. See `design/contract.md` sections 6.2,
+7.2 and 8.
 
 ## Question
 
@@ -187,7 +193,11 @@ Go only if all hold:
   wrote their log lines.
 - **Older builds: degrade cleanly.** On 2.1.29, `plugin validate` passes, the
   `"modules"` key is ignored, and the command `Stop` hook still runs. A mode
-  inside `claude-watchdog` would not break older installs (D1).
+  inside `claude-watchdog` would not break older installs (D1). Note that
+  2.1.29 cannot load the full `claude-watchdog` at all, before or after this
+  work: it rejects `userConfig` and `$schema` as unknown manifest keys. For
+  the same reason the module avoids `$.state`, which needs a `"types"`
+  manifest key.
 - **Test kit: works.** `claude plugin test` answers `model.fork`, `fs.*`,
   `env.get` and `session.id` from test hooks. A noun call's hook must answer
   `{ value }`, an event's hook its result. 4 tests in

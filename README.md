@@ -65,6 +65,7 @@ Stop hook feedback: Watchdog is running checks… Use the Read tool on '<project
 | PreToolUse hook | `hooks/enforce-subagent-model.mjs` | Optionally blocks a `Task`/`Agent` dispatch that ignores an agent's pinned model |
 | PostToolUse hook | `hooks/await-reviews.mjs` | Optionally waits for bot reviews and CI after a push, then wakes Claude with the results |
 | Subagent | `agents/session-analyzer.md` | Reads the transcript + `git diff`, writes the review |
+| Hooks module | `hooks/light-mode.tsx` | Optional light mode: reviews through a fork of the conversation and shows the result above the prompt |
 | Slash command | `skills/analyze-session/SKILL.md` | `/analyze-session` for on-demand analysis mid-conversation |
 
 ## Requirements
@@ -117,6 +118,7 @@ with `/plugin configure claude-watchdog`:
 | Wake on bot reviews and CI | `false` | After a `git push` / `gh pr create` on a branch with an open PR, wake Claude once checks settle with failures and new bot comments (see below) |
 | Fix recommendations | `false` | After presenting the analysis, Claude applies its `[code]` recommendations in the same turn. `[instruction]` items are drafted, not written, and nothing is committed. With interactive recommendations on, only the selected items are applied |
 | Self-check each turn | `false` | At the end of a turn that changed something, ask Claude whether it would ship the work as it is, and to fix only major problems if not (see below) |
+| Light mode | `off` | `on` reviews through a tool-less fork of the conversation and shows the result above the prompt, without blocking Claude. `both` runs it beside the analyzer, for comparison (see below) |
 
 ### Environment variable overrides
 
@@ -136,6 +138,7 @@ take priority over the plugin config. Set these in your shell profile or
 | `CLAUDE_WATCHDOG_AWAIT_REVIEWS` | `0` | Set to `1` to wake Claude when bot reviews and CI settle after a push (see below) |
 | `CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS` | `0` | Set to `1` to have Claude apply the analysis's recommendations after presenting it |
 | `CLAUDE_WATCHDOG_SELF_CHECK` | `0` | Set to `1` to have Claude self-check each turn that changed something (see below) |
+| `CLAUDE_WATCHDOG_LIGHT_MODE` | `off` | `on` or `both` to turn on light mode (see below) |
 
 ### Advanced overrides
 
@@ -160,6 +163,8 @@ the plugin configuration prompt:
 | `CLAUDE_WATCHDOG_AWAIT_QUIET_SECONDS` | `90` | Minimum time since the last status or check changed before the head counts as settled, since bots flip their status to done before posting the review |
 | `CLAUDE_WATCHDOG_AWAIT_MAX_ROUNDS` | `3` | Maximum wake-ups per PR per session, so a review/fix loop cannot run forever |
 | `CLAUDE_WATCHDOG_GH` | `gh` | `gh` binary the await hook calls |
+| `CLAUDE_WATCHDOG_LIGHT_DIR` | `~/.claude/tmp/claude-watchdog/light` | Where the Stop hook and the light-mode module exchange files |
+| `CLAUDE_WATCHDOG_LIGHT_LOG` | `~/.claude/logs/claude-watchdog-light.jsonl` | One JSON line per light-mode check: latency, token usage, outcome, and the button pressed |
 
 ### Holding input during analysis
 
@@ -204,6 +209,34 @@ choice it already regrets, not style or polish. A clean turn ends with
 - It is self-review, run by the same model in the same context. It costs one
   extra turn, but shares the model's blind spots; the analyzer stays the
   independent check.
+
+### Light mode
+
+With **Light mode** set to `on`, the review comes from a fork of the main
+conversation instead of the analyzer subagent. The fork has no tools. Claude is
+not blocked, and the review is not added to its context. It shows in a band
+above the prompt with three keys: `1` puts the review in the prompt box for
+Claude (press Enter to send), `2` marks its findings as not useful so they are
+not raised again, and `0` dismisses it. A clean review shows as a short notice.
+Every review is still saved to the analyses directory.
+
+- The Stop hook still decides when to review, with every gate listed above. It
+  hands the slice to `hooks/light-mode.tsx` through a request file, because
+  plugin hooks modules cannot see Stop hook output on machines with managed
+  settings.
+- The fork reads the conversation from the prompt cache, so a check costs
+  mostly cache reads on the session's own model. The module collects the git
+  diff for it, capped at 20 KB.
+- When the module is not running (for example, an older Claude Code, or a
+  failed load), the Stop hook falls back to the analyzer.
+- `both` runs light mode and the analyzer side by side, for comparing them.
+- Needs a Claude Code build with plugin hooks modules (tested on 2.1.296).
+- **Hold input** has nothing to hold in `on` mode, since Claude is never
+  blocked.
+- First-party API only for now: on Bedrock, Vertex or Foundry the analyzer runs
+  instead.
+- With no tools, the fork cannot run `git show` to confirm a finding. It is
+  told to drop anything it cannot cite from the conversation or the diff.
 
 ### Enforcing pinned subagent models
 

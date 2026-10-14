@@ -66,10 +66,9 @@ test-await-reviews:
 test-perf:
     bash tests/perf.sh
 
-# Light-mode spike mod (not part of `just test`: needs the `claude` binary)
-test-lite:
-    claude plugin validate spike/lite
-    claude plugin test spike/lite
+# Light-mode hooks module (not part of `just test`: needs the `claude` binary)
+test-light:
+    claude plugin test .
 
 # Stop hook's handoff to the light-mode module
 test-light-handoff:
