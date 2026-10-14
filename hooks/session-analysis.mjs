@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync,
-  statSync, unlinkSync, rmdirSync, existsSync, chmodSync, utimesSync
+  statSync, unlinkSync, rmdirSync, existsSync, chmodSync, utimesSync, renameSync
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, parse as parsePath, relative, resolve } from 'node:path';
@@ -61,6 +61,20 @@ const SELF_CHECK = cfg('CLAUDE_WATCHDOG_SELF_CHECK', 'CLAUDE_PLUGIN_OPTION_SELF_
 const SKIP_WITH_BG = cfg('CLAUDE_WATCHDOG_SKIP_WITH_BACKGROUND_TASKS', 'CLAUDE_PLUGIN_OPTION_SKIP_WITH_BACKGROUND_TASKS', '1');
 const HOLD_INPUT = cfg('CLAUDE_WATCHDOG_HOLD_INPUT', 'CLAUDE_PLUGIN_OPTION_HOLD_INPUT_DURING_ANALYSIS', '0');
 const INCLUDE_RULES = cfg('CLAUDE_WATCHDOG_INCLUDE_RULES', 'CLAUDE_PLUGIN_OPTION_INCLUDE_RULES', '1');
+const LIGHT_MODES = ['off', 'on', 'both'];
+const RAW_LIGHT_MODE = cfg('CLAUDE_WATCHDOG_LIGHT_MODE', 'CLAUDE_PLUGIN_OPTION_LIGHT_MODE', 'off');
+if (!LIGHT_MODES.includes(RAW_LIGHT_MODE)) {
+  CONFIG_WARNINGS.push(`CONFIG: LIGHT_MODE='${RAW_LIGHT_MODE}' is not one of off, on, both, using off`);
+}
+const LIGHT_MODE = LIGHT_MODES.includes(RAW_LIGHT_MODE) ? RAW_LIGHT_MODE : 'off';
+// Shared with hooks/light-mode.ts, which cannot see CLAUDE_PLUGIN_DATA, so it
+// is a fixed path rather than a child of WATCHDOG_TMP.
+const LIGHT_DIR = process.env.CLAUDE_WATCHDOG_LIGHT_DIR ?? join(homedir(), '.claude/tmp/claude-watchdog/light');
+// The module refreshes its marker at every turn start, so a marker older than
+// the sweep age means the module is gone.
+const LIGHT_ALIVE_MAX_MS = 120 * 60 * 1000;
+// The module consumes a request when the turn completes, seconds after Stop.
+const LIGHT_UNCONSUMED_MAX_MS = 120 * 1000;
 
 function log(msg) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -92,7 +106,7 @@ function cleanupSessionsDir(dir) {
       try {
         if (entry.isFile()) {
           const age = now - statSync(full).mtimeMs;
-          if (/^(condensed|raw|delta|echo|pending|rules|await|brief)-/.test(entry.name) && age > twoHoursMs) {
+          if (/^(condensed|raw|delta|echo|pending|rules|await|brief|light|alive)-/.test(entry.name) && age > twoHoursMs) {
             unlinkSync(full);
           } else if (/^(cursor|selfcheck)-/.test(entry.name) && age > cursorTtlMs) {
             unlinkSync(full);
@@ -420,6 +434,45 @@ function writeBrief(file, instruction, label) {
   } catch (err) {
     log(`BRIEF: write failed (${err.message}), sending the instruction inline`);
     return instruction;
+  }
+}
+
+// 'off', 'module' (hand off, no brief), 'both' (hand off and brief), or
+// 'fallback' (light mode is on but no module can take the request).
+function lightDecision(sessionId) {
+  if (LIGHT_MODE === 'off') return 'off';
+  const fresh = (file, maxMs) => {
+    try { return Date.now() - statSync(file).mtimeMs <= maxMs; } catch { return false; }
+  };
+  if (!fresh(join(LIGHT_DIR, `alive-${sessionId}`), LIGHT_ALIVE_MAX_MS)) {
+    log('LIGHT: no live module marker for this session, using the analyzer');
+    return 'fallback';
+  }
+  const prior = join(LIGHT_DIR, `light-${sessionId}.json`);
+  if (existsSync(prior) && !fresh(prior, LIGHT_UNCONSUMED_MAX_MS)) {
+    let consumed = false;
+    try { consumed = Boolean(JSON.parse(readFileSync(prior, 'utf8')).consumedAt); } catch { /* unreadable: treat as unconsumed */ }
+    if (!consumed) {
+      log('LIGHT: previous request was never consumed, using the analyzer');
+      return 'fallback';
+    }
+  }
+  return LIGHT_MODE === 'both' ? 'both' : 'module';
+}
+
+// Written to a temp name and renamed, so the module never reads half a file.
+function writeLightRequest(sessionId, request) {
+  try {
+    mkdirSync(LIGHT_DIR, { recursive: true });
+    chmodSync(LIGHT_DIR, 0o700);
+    cleanupSessionsDir(LIGHT_DIR);
+    const file = join(LIGHT_DIR, `light-${sessionId}.json`);
+    writeFileSync(`${file}.tmp`, JSON.stringify(request) + '\n');
+    renameSync(`${file}.tmp`, file);
+    return true;
+  } catch (err) {
+    log(`LIGHT: request write failed (${err.message}), using the analyzer`);
+    return false;
   }
 }
 
@@ -883,6 +936,25 @@ ${postAnalysis}`;
 
   const visible = writeBrief(join(SESSIONS_DIR, `brief-${sessionId}.md`), instruction, 'Watchdog is running checks…');
 
+  let light = lightDecision(sessionId);
+  if (light === 'module' || light === 'both') {
+    const handed = writeLightRequest(sessionId, {
+      version: 1,
+      sessionId,
+      projectRoot: projRoot,
+      cwd: safeCwd,
+      commitRange: commitRange || null,
+      touchedFiles: stats.files,
+      externalFiles: stats.external,
+      attribution: attribution || null,
+      previousAnalysis: prevAnalysis || null,
+      isContinuation: hadCursor,
+      analysesDir: ANALYSES_DIR,
+      createdAt: new Date().toISOString(),
+    });
+    if (!handed) light = 'fallback';
+  }
+
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {
     if (/^[A-Za-z0-9_-]+$/.test(cursorResult.uuid)) {
@@ -897,6 +969,12 @@ ${postAnalysis}`;
       log('CURSOR: invalid last-uuid output, cursor unchanged');
     }
   }
+
+  if (light === 'module') {
+    log('LIGHT: handed to the module');
+    process.exit(0);
+  }
+  if (light === 'both') log('LIGHT: handed to the module, analyzer runs too');
 
   // Drop the self-owned sentinel just before we block, so the analyzer's resulting
   // Stop (which carries stop_hook_active=true) is recognized as our own echo and
