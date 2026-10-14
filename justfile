@@ -71,6 +71,10 @@ test-lite:
     claude plugin validate spike/lite
     claude plugin test spike/lite
 
+# Stop hook's handoff to the light-mode module
+test-light-handoff:
+    bash tests/light.sh
+
 # --- rewrite/fixtures block (section 4) -------------------------------------
 
 # Event-dump capture, the sanitiser, and the reconstructed fixtures
@@ -113,7 +117,7 @@ test-lifecycle:
 # --- end rewrite/coverage-config --------------------------------------------
 
 # Run all tests
-test: smoke test-cursor test-condense test-persist test-hold test-agent-prompt test-enforce-model test-await-reviews test-gates test-fixtures test-golden test-config test-lifecycle
+test: smoke test-light-handoff test-cursor test-condense test-persist test-hold test-agent-prompt test-enforce-model test-await-reviews test-gates test-fixtures test-golden test-config test-lifecycle
 
 # Lint + all tests
 check: lint test
