@@ -110,6 +110,7 @@ The payload is `entry.attachment`, keyed by its own `type`. Observed and handled
 | `plan_mode`, `plan_mode_exit` | not in the fixture | Rendered as a bare `SYSTEM[plan_mode]` line. **[No fixture coverage]** |
 | `task_reminder` | `{type, content, itemCount}` | Dropped as noise |
 | `deferred_tools_delta`, `agent_listing_delta`, `mcp_instructions_delta`, `skill_listing` | not in the fixture | Dropped as noise. **[No fixture coverage]** |
+| `hook_success` and the context attachments listed in `contract.md` section 9.5 | see `tests/fixtures/bookkeeping-session.jsonl` | Dropped as noise. First seen on Claude Code 2.1.322 |
 
 Anything else becomes `SYSTEM[attachment:<type>]` with the attachment JSON cut at
 200 characters, so a new attachment type is noisy but never invisible.
@@ -164,6 +165,11 @@ cursor's anchor. `lastUuid()` scanning backwards skips them, which is why a
 transcript ending in a `pr-link` still produces a usable cursor.
 
 **Version**: not determinable for any of the five.
+
+Claude Code 2.1.322 writes many more bookkeeping entry types (`api-request`,
+`bridge-session`, `session-owner`, and others). They are dropped the same way.
+`contract.md` section 9.5 has the full list, and
+`tests/fixtures/bookkeeping-session.jsonl` has one synthetic entry of each.
 
 ### 1.6 Sidechain entries
 

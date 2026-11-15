@@ -274,6 +274,27 @@ grep -q '^USER: This session is being continued' "$out" \
   || fail "fx-compaction-label" "the compact carry-over is labelled USER, not mid-turn"
 pass "fx-compacted-session-renders-summary-and-carryover"
 
+# --- harness bookkeeping (Claude Code 2.1.322 entry types) ---------------------
+out="$TMPROOT/bookkeeping.txt"
+extract_to tests/fixtures/bookkeeping-session.jsonl "$out"
+# The whole session is one ask, one edit, one hook failure and one hook message.
+# Anything else on a SYSTEM line is a bookkeeping type that needs adding to the
+# noise sets in hooks/condense.mjs.
+extra=$(grep '^SYSTEM\[' "$out" \
+  | grep -v -e '^SYSTEM\[attachment:hook_non_blocking_error\]' \
+            -e '^SYSTEM\[attachment:hook_additional_context\]' \
+            -e '^SYSTEM\[system\]: .*compact_boundary' || true)
+[ -z "$extra" ] || { echo "$extra" | cut -c1-120; fail "fx-bookkeeping-dropped" "bookkeeping entries still spend budget"; }
+grep -q '^SYSTEM\[attachment:hook_non_blocking_error\]: .*formatter not found' "$out" \
+  || fail "fx-bookkeeping-hook-error" "a hook failure must stay visible"
+grep -q '^SYSTEM\[attachment:hook_additional_context\]: .*Run the linter' "$out" \
+  || fail "fx-bookkeeping-hook-context" "what a hook told Claude must stay visible"
+grep -q '^SYSTEM\[system\]: .*compact_boundary' "$out" \
+  || fail "fx-bookkeeping-system-kept" "system entries other than hook and timing summaries must stay visible"
+grep -qx 'USER: Bump the cache TTL to 600 seconds.' "$out" || fail "fx-bookkeeping-user" "user prompt missing"
+grep -q '^TOOL_USE: Edit(' "$out" || fail "fx-bookkeeping-tool" "tool_use missing"
+pass "fx-bookkeeping-session-drops-harness-entries"
+
 # --- thinking blocks ---------------------------------------------------------
 out="$TMPROOT/thinking.txt"
 extract_to tests/fixtures/thinking-session.jsonl "$out"

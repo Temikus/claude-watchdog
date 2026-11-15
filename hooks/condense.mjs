@@ -20,7 +20,20 @@ const SYSTEM_MAX = 200;
 // pings). Dumped as raw JSON they crowded out real content in the byte budget.
 // Unknown types are NOT dropped - they still fall through to a SYSTEM[...] line,
 // so a future type carrying user text degrades to noisy rather than invisible.
-const NOISE_TYPES = new Set(['last-prompt', 'custom-title', 'ai-title', 'pr-link', 'mode']);
+const NOISE_TYPES = new Set([
+  'last-prompt', 'custom-title', 'ai-title', 'pr-link', 'mode',
+  // Per-request and per-session records. Measured at over half of the condensed
+  // bytes on Claude Code 2.1.322 (#66).
+  'api-request', 'api-request-blob', 'api-request-shape',
+  'bridge-session', 'session-owner', 'permission-mode', 'atis-latch',
+  'agent-name', 'frame-link', 'tools-used', 'cost-state',
+  'file-history-snapshot', 'file-history-delta',
+  'artifact-autoreact-ledger', 'artifact-comment-monitor',
+]);
+
+// `system` entries are kept (compaction boundaries, command output) except
+// these, written once per turn with timings only.
+const NOISE_SYSTEM_SUBTYPES = new Set(['stop_hook_summary', 'turn_duration']);
 
 // Harness plumbing attachments - no session content worth spending budget on.
 const NOISE_ATTACHMENTS = new Set([
@@ -29,6 +42,15 @@ const NOISE_ATTACHMENTS = new Set([
   'agent_listing_delta',
   'mcp_instructions_delta',
   'skill_listing',
+  // One per hook per tool call. A hook that fails, blocks or adds context writes
+  // its own attachment (hook_non_blocking_error, hook_blocking_error,
+  // hook_additional_context), and those stay visible.
+  'hook_success',
+  // Context the harness re-sends to the model: no session content.
+  'environment', 'session_context', 'date', 'model', 'credential_org',
+  'instructions', 'prompt_snapshot', 'auto_mode', 'command_permissions',
+  'sandbox_instructions', 'remote_session_change', 'deferred_tools_record',
+  'total_tokens_reminder', 'silent_turn_reminder', 'thinking_drop',
 ]);
 
 // Some builds hand a mid-turn message to the model wrapped in framing text rather
@@ -184,7 +206,7 @@ export function extractTranscript(lines) {
       if (obj.operation === 'remove' && content && !attachmentPrompts.has(content)) {
         output.push(`${MIDTURN_LABEL}: ${content}`);
       }
-    } else if (!NOISE_TYPES.has(obj.type)) {
+    } else if (!NOISE_TYPES.has(obj.type) && !(obj.type === 'system' && NOISE_SYSTEM_SUBTYPES.has(obj.subtype))) {
       output.push(`SYSTEM[${obj.type || 'unknown'}]: ${clip(JSON.stringify(obj), SYSTEM_MAX)}`);
     }
   }
