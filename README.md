@@ -288,7 +288,7 @@ One line per event, prefixed with its kind:
 | `SYSTEM[…]:` | Everything else, including hook blocks and entry types the condenser doesn't know about |
 | `=== FINAL ASSISTANT MESSAGE (session ended here) ===` | Claude's concluding turn, appended after condensation so it is never truncated away — without it the transcript ends on tool results and the deliverable is invisible to the analyzer |
 
-Pure session bookkeeping (window titles, PR links, mode pings, the last-prompt cache, queue enqueue/dequeue records) is dropped — it duplicates real message entries and otherwise crowds real content out of the byte budget. When the transcript busts the budget, user messages are kept ahead of tool traffic, and both ends of the user thread are kept (the opening goal and the most recent asks) rather than only the beginning.
+Pure session bookkeeping (window titles, PR links, mode pings, the last-prompt cache, queue enqueue/dequeue records, per-request and successful-hook records) is dropped — it duplicates real message entries and otherwise crowds real content out of the byte budget. When the transcript busts the budget, user messages are kept ahead of tool traffic, and both ends of the user thread are kept (the opening goal and the most recent asks) rather than only the beginning.
 
 No data leaves your machine except through Claude Code's normal model calls.
 

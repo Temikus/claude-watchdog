@@ -1,0 +1,42 @@
+{"type":"user","uuid":"u-bk-0001","sessionId":"00000000-0000-4000-8000-000000000007","message":{"content":"Bump the cache TTL to 600 seconds."}}
+{"type":"api-request","id":"req-bk-0001","querySource":"repl_main_thread","shapeHash":"0000000000000000000000000000000000000000000000000000000000000001"}
+{"type":"api-request-blob","hash":"0000000000000000000000000000000000000000000000000000000000000002","message":{"role":"user","content":[{"type":"text","text":"Bump the cache TTL to 600 seconds."}]}}
+{"type":"api-request-shape","shapeHash":"0000000000000000000000000000000000000000000000000000000000000001","shape":{"system":[{"type":"text","text":"You are a coding agent."}]}}
+{"type":"bridge-session","bridgeSessionId":"cse_00000000000000000000000000","lastSequenceNum":0}
+{"type":"session-owner","accountUuid":"00000000-0000-4000-8000-0000000000a1","organizationUuid":"00000000-0000-4000-8000-0000000000a2"}
+{"type":"permission-mode","permissionMode":"acceptEdits"}
+{"type":"atis-latch","atis":""}
+{"type":"agent-name","agentName":"cache-worker"}
+{"type":"frame-link","path":"/tmp/frames/00000000-0000-4000-8000-000000000007.jsonl"}
+{"type":"file-history-snapshot","messageId":"m-bk-0001","snapshot":{"messageId":"m-bk-0001","trackedFileBackups":{}}}
+{"type":"file-history-delta","messageId":"m-bk-0002","snapshotMessageId":"m-bk-0001","trackingPath":"/repo/cache.py"}
+{"type":"attachment","uuid":"a-bk-0001","attachment":{"type":"environment","snapshot":{"workingDirectory":"/repo","isWorktree":false,"isGitRepo":true}}}
+{"type":"attachment","uuid":"a-bk-0002","attachment":{"type":"session_context","context":{"userEmail":"The user's email address is dev@example.com."}}}
+{"type":"attachment","uuid":"a-bk-0003","attachment":{"type":"date","date":"2026-01-01"}}
+{"type":"attachment","uuid":"a-bk-0004","attachment":{"type":"model","identity":{"modelId":"claude-example","marketingName":"Example"},"text":"You are powered by the model named Example."}}
+{"type":"attachment","uuid":"a-bk-0005","attachment":{"type":"credential_org","organizationUuid":"00000000-0000-4000-8000-0000000000a2"}}
+{"type":"attachment","uuid":"a-bk-0006","attachment":{"type":"instructions","files":[{"path":"/home/dev/.claude/rules/style.md","type":"User","content":"Prefer short functions."}]}}
+{"type":"attachment","uuid":"a-bk-0007","attachment":{"type":"prompt_snapshot","systemPrompt":["You are a coding agent."]}}
+{"type":"attachment","uuid":"a-bk-0008","attachment":{"type":"auto_mode","autoModeConsentFlow":false,"bypass":false}}
+{"type":"attachment","uuid":"a-bk-0009","attachment":{"type":"command_permissions","allowedTools":[]}}
+{"type":"attachment","uuid":"a-bk-0010","attachment":{"type":"sandbox_instructions","content":"## Bash command sandbox\nCommands run inside a sandbox."}}
+{"type":"attachment","uuid":"a-bk-0011","attachment":{"type":"remote_session_change","url":"https://example.com/session_0000","commit":"Co-Authored-By: Example <noreply@example.com>"}}
+{"type":"attachment","uuid":"a-bk-0012","attachment":{"type":"hook_success","hookName":"PreToolUse:Edit","toolUseID":"toolu_bk_0001","hookEvent":"PreToolUse","content":"","stdout":"{}","stderr":"","exitCode":0,"command":"command hook 1","durationMs":12}}
+{"type":"assistant","uuid":"m-bk-0002","message":{"content":[{"type":"text","text":"Setting CACHE_TTL to 600."},{"type":"tool_use","id":"toolu_bk_0001","name":"Edit","input":{"file_path":"/repo/cache.py","old_string":"CACHE_TTL = 300","new_string":"CACHE_TTL = 600"}}]}}
+{"type":"attachment","uuid":"a-bk-0013","attachment":{"type":"hook_success","hookName":"PostToolUse:Edit","toolUseID":"toolu_bk_0001","hookEvent":"PostToolUse","content":"","stdout":"","stderr":"","exitCode":0,"command":"command hook 2","durationMs":9}}
+{"type":"attachment","uuid":"a-bk-0014","attachment":{"type":"deferred_tools_record","entries":[],"toolInputCopies":[{"id":"toolu_bk_0001","copy":"wire"}]}}
+{"type":"user","uuid":"u-bk-0002","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_bk_0001","content":"The file /repo/cache.py has been updated."}]}}
+{"type":"tools-used","tools":["Edit"]}
+{"type":"attachment","uuid":"a-bk-0015","attachment":{"type":"total_tokens_reminder","text":"<total_tokens>1000000 tokens left</total_tokens>"}}
+{"type":"attachment","uuid":"a-bk-0016","attachment":{"type":"silent_turn_reminder","text":"The user hasn't heard from you in a while."}}
+{"type":"attachment","uuid":"a-bk-0017","attachment":{"type":"thinking_drop","requestId":"req_bk_0002","model":"claude-example","thinkingBlocksSent":1}}
+{"type":"attachment","uuid":"a-bk-0018","attachment":{"type":"hook_non_blocking_error","hookName":"PostToolUse:Edit","toolUseID":"toolu_bk_0001","hookEvent":"PostToolUse","stderr":"Failed with non-blocking status code: formatter not found","exitCode":1}}
+{"type":"assistant","uuid":"m-bk-0003","message":{"content":[{"type":"text","text":"CACHE_TTL is now 600 seconds."}]}}
+{"type":"attachment","uuid":"a-bk-0019","attachment":{"type":"hook_success","hookName":"Stop","toolUseID":"stop-bk-0001","hookEvent":"Stop","content":"","stdout":"{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"Run the linter before you stop.\"}}","stderr":"","exitCode":0,"command":"command hook 3","durationMs":40}}
+{"type":"attachment","uuid":"a-bk-0020","attachment":{"type":"hook_additional_context","content":["Run the linter before you stop."],"hookName":"Stop","toolUseID":"stop-bk-0001","hookEvent":"Stop"}}
+{"type":"system","uuid":"s-bk-0001","subtype":"stop_hook_summary","hookCount":3,"hookInfos":[{"command":"command hook 3","durationMs":40}],"hookErrors":[]}
+{"type":"system","uuid":"s-bk-0002","subtype":"turn_duration","durationMs":4200,"messageCount":4}
+{"type":"system","uuid":"s-bk-0003","subtype":"compact_boundary","content":"Conversation compacted"}
+{"type":"cost-state","totalCostUSD":0.12,"totalAPIDuration":4100}
+{"type":"artifact-autoreact-ledger","v":1,"artifacts":{}}
+{"type":"artifact-comment-monitor","v":1,"artifacts":{}}
