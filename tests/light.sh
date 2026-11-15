@@ -3,7 +3,7 @@
 #
 # The module itself is tested by `just test-light` (claude plugin test). Here
 # the module is played by files: an alive marker it would write each turn, and
-# the consumedAt it would add to a request it picked up.
+# the consumedAt, doneAt or failedAt it would add to a request.
 # shellcheck source=tests/lib.sh
 . "$(dirname "$0")/lib.sh"
 
@@ -102,6 +102,9 @@ alive "$sid"
 light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on CLAUDE_WATCHDOG_HOLD_INPUT=1
 assert_outcome "on-handoff" SKIP
 assert_log "on-handoff" "LIGHT: handed to the module"
+assert_log "on-handoff" "TRIGGER: handing the review to the light-mode module"
+if grep -q "injecting session-analyzer\|brief file" "$LLOG"; then cat "$LLOG" >&2; fail "on-handoff" "log claims an analyzer run that did not happen"; fi
+[ ! -e "$LSESSIONS/brief-$sid.md" ] || fail "on-handoff" "analyzer brief written with no analyzer run"
 req="$LDIR/light-$sid.json"
 [ -f "$req" ] || fail "on-handoff" "no request file"
 [ ! -e "$LSESSIONS/echo-$sid" ] || fail "on-handoff" "echo sentinel written with no continuation coming"
@@ -113,31 +116,88 @@ jq -e --arg sid "$sid" --arg proj "$PROJ" --arg an "$LANALYSES" '
   .version == 1 and .sessionId == $sid and .projectRoot == $proj
   and .analysesDir == $an and .isContinuation == false
   and (.touchedFiles | type) == "array" and (.externalFiles | type) == "array"
-  and has("commitRange") and has("attribution") and has("previousAnalysis")
+  and has("commitRange") and has("attribution")
+  and .prevCursor == null and .handoff == "module"
   and (.createdAt | type) == "string" and (has("consumedAt") | not)
 ' "$req" > /dev/null || { cat "$req" >&2; fail "request-shape" "unexpected request JSON"; }
 pass "light-request-carries-the-slice"
 
-# A Stop that finds an old request still unconsumed: the module failed.
+# --- a review the module never delivered ---------------------------------------
+
+# mark <sid> <jq filter> - what the module would write onto the request.
+mark() {
+  jq -c "$2" "$LDIR/light-$1.json" > "$LDIR/light-$1.json.new" && mv "$LDIR/light-$1.json.new" "$LDIR/light-$1.json"
+}
+
+# The fork failed: the next Stop puts the cursor back, so the analyzer reviews
+# the slice the handoff had already moved past.
+sid=$(new_sid)
+alive "$sid"
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
+assert_outcome "failed-handoff" SKIP
+mark "$sid" '. + {consumedAt: "2026-01-01T00:00:00Z", failedAt: "2026-01-01T00:00:02Z", failure: "api-error"}'
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
+assert_outcome "failed-recovered" BLOCK
+assert_log "failed-recovered" "LIGHT: previous review failed (api-error), the analyzer re-reviews its slice"
+assert_log "failed-recovered" "tool_use count (delta): 3 "
+[ ! -e "$LDIR/light-$sid.json" ] || fail "failed-recovered" "failed request left behind, it would recover twice"
+pass "light-failed-review-is-re-reviewed-by-the-analyzer"
+
+# Same slice, but the cursor existed before the handoff: it is restored, and the
+# cooldown that the handoff started does not hold the analyzer back.
+sid=$(new_sid)
+alive "$sid"
+printf 'a-LM-1\n2\n%s\n\n' "$TRANSCRIPT" > "$LSESSIONS/cursor-$sid.txt"
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on CLAUDE_WATCHDOG_MIN_TOOL_USES=1
+assert_outcome "restore-handoff" SKIP
+jq -e '.prevCursor | startswith("a-LM-1\n")' "$LDIR/light-$sid.json" > /dev/null || fail "restore-handoff" "request does not carry the previous cursor"
+mark "$sid" '. + {consumedAt: "2026-01-01T00:00:00Z", failedAt: "2026-01-01T00:00:02Z", failure: "nothing-to-fork"}'
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on CLAUDE_WATCHDOG_MIN_TOOL_USES=1 CLAUDE_WATCHDOG_COOLDOWN_SECONDS=600
+assert_outcome "restore-recovered" BLOCK
+assert_log "restore-recovered" "CURSOR: uuid=a-LM-1 "
+pass "light-failed-review-restores-the-cursor-past-the-cooldown"
+
+# Picked up but never finished (the session died mid-fork).
+sid=$(new_sid)
+alive "$sid"
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
+mark "$sid" '. + {consumedAt: "2026-01-01T00:00:00Z"}'
+set_mtime "$LDIR/light-$sid.json" 300
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
+assert_outcome "unfinished" BLOCK
+assert_log "unfinished" "LIGHT: previous review never finished, the analyzer re-reviews its slice"
+pass "light-unfinished-review-is-re-reviewed-by-the-analyzer"
+
+# Never picked up at all, and no cursor recorded to go back to.
 sid=$(new_sid)
 alive "$sid"
 printf '{"version":1}\n' > "$LDIR/light-$sid.json"
 set_mtime "$LDIR/light-$sid.json" 300
 light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
 assert_outcome "on-unconsumed" BLOCK
-assert_log "on-unconsumed" "LIGHT: previous request was never consumed, using the analyzer"
+assert_log "on-unconsumed" "LIGHT: previous review was never picked up, using the analyzer"
 pass "light-on-unconsumed-request-falls-back-to-analyzer"
 
-# A consumed request does not block the next handoff.
+# A request still in flight is left alone.
+sid=$(new_sid)
+alive "$sid"
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
+mark "$sid" '. + {consumedAt: "2026-01-01T00:00:00Z"}'
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
+assert_outcome "in-flight" SKIP
+if grep -q "LIGHT: previous review" "$LLOG"; then cat "$LLOG" >&2; fail "in-flight" "recovered a review that is still running"; fi
+pass "light-in-flight-request-is-not-recovered"
+
+# A finished review does not block the next handoff.
 sid=$(new_sid)
 alive "$sid"
 mkdir -p "$LDIR"
-printf '{"version":1,"consumedAt":"%s"}\n' "$(iso_now)" > "$LDIR/light-$sid.json"
+printf '{"version":1,"consumedAt":"%s","doneAt":"%s"}\n' "$(iso_now)" "$(iso_now)" > "$LDIR/light-$sid.json"
 set_mtime "$LDIR/light-$sid.json" 300
 light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on
-assert_outcome "on-after-consumed" SKIP
-jq -e 'has("consumedAt") | not' "$LDIR/light-$sid.json" > /dev/null || fail "on-after-consumed" "request not replaced"
-pass "light-on-consumed-request-allows-next-handoff"
+assert_outcome "on-after-done" SKIP
+jq -e 'has("consumedAt") | not' "$LDIR/light-$sid.json" > /dev/null || fail "on-after-done" "request not replaced"
+pass "light-on-finished-request-allows-next-handoff"
 
 # The plugin option works like the env override.
 sid=$(new_sid)
@@ -155,5 +215,11 @@ assert_outcome "both" BLOCK
 [ -f "$LDIR/light-$sid.json" ] || fail "both" "no request file"
 assert_log "both" "LIGHT: handed to the module, analyzer runs too"
 pass "light-both-runs-module-and-analyzer"
+
+# In both, the analyzer already reviewed the slice: a failed fork changes nothing.
+mark "$sid" '. + {consumedAt: "2026-01-01T00:00:00Z", failedAt: "2026-01-01T00:00:02Z", failure: "api-error"}'
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=both
+if grep -q "LIGHT: previous review" "$LLOG"; then cat "$LLOG" >&2; fail "both-failed" "re-reviewed a slice the analyzer already covered"; fi
+pass "light-both-failed-fork-is-not-re-reviewed"
 
 echo "--- all light-mode handoff tests passed ---"

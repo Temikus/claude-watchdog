@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Engine, On } from 'claude-code'
+import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
 
 import { parse } from './light-mode'
 
@@ -10,7 +11,7 @@ const USAGE = { input_tokens: 9000, output_tokens: 700, cache_read_input_tokens:
 
 const REQUEST = {
   version: 1, sessionId: SID, projectRoot: '/repo', cwd: '/repo', commitRange: 'abc1234',
-  touchedFiles: ['src/a.ts'], externalFiles: [], attribution: null, previousAnalysis: null,
+  touchedFiles: ['src/a.ts'], externalFiles: [], attribution: null, prevCursor: null, handoff: 'module',
   isContinuation: true, analysesDir: '/fake/analyses', createdAt: '2026-10-14T00:00:00Z',
 }
 
@@ -43,7 +44,7 @@ type World = {
 
 // Plays every $ call the module makes. A noun call's hook answers `{ value }`;
 // an event's hook answers the event's result.
-function world(on: On, opts: { reply?: string; env?: Record<string, string>; files?: Record<string, string>; diff?: string } = {}): World {
+function world(on: On, opts: { reply?: string; forkFails?: string; duringFork?: (files: Map<string, string>) => void; surfaces?: string[]; env?: Record<string, string>; files?: Record<string, string>; diff?: string } = {}): World {
   const env: Record<string, string> = { CLAUDE_WATCHDOG_LIGHT_DIR: DIR, CLAUDE_WATCHDOG_LIGHT_LOG: LOG, HOME: '/home/u', ...opts.env }
   const files = new Map(Object.entries(opts.files ?? {}))
   const w: Omit<World, 'checked'> = { files, forks: [], gitCalls: [], toasts: [], fills: [], store: new Map() }
@@ -53,9 +54,10 @@ function world(on: On, opts: { reply?: string; env?: Record<string, string>; fil
   // The engine's own band, drawn when the module has nothing to show.
   on('ui.render', () => ({ type: 'Box', props: {}, children: [] }) as never)
   on('turn.complete', () => ({ text: '' }))
-  on('session.start', () => ({}) as never)
+  on('session.start', () => ({ cwd: '/repo' }) as never)
   on('env.get', ($, e) => ({ value: env[e.name] }))
   on('session.id', () => ({ value: SID }))
+  on('session.surfaces', () => ({ value: opts.surfaces ?? ['terminal'] }) as never)
   on('fs.read', ($, e) => {
     if (e.path.endsWith('/hooks/light-prompt.md')) return { value: 'RULES' }
     const text = files.get(e.path)
@@ -78,10 +80,14 @@ function world(on: On, opts: { reply?: string; env?: Record<string, string>; fil
   })
   on('model.fork', ($, e) => {
     w.forks.push(e.prompt)
+    opts.duringFork?.(files)
+    if (opts.forkFails) return { value: { isAnswered: false, reason: opts.forkFails, usage: USAGE } as never }
     return { value: { isAnswered: true, text: opts.reply ?? FINDINGS, usage: USAGE } as never }
   })
   on('store.get', ($, e) => ({ value: w.store.get(e.key) }))
   on('store.set', ($, e) => { w.store.set(e.key, e.value); return { value: undefined } })
+  on('store.delete', ($, e) => { w.store.delete(e.key); return { value: undefined } })
+  on('store.keys', () => ({ value: [...w.store.keys()] }))
   on('ui.toast', ($, e) => { w.toasts.push(e.text); return { value: undefined } })
   on('prompt.fill', ($, e) => { w.fills.push(e.text); return { isFilled: true } })
   return { ...w, checked }
@@ -127,9 +133,12 @@ describe('turn.complete picks up the request', () => {
     await w.checked
     await settle()
 
-    expect(JSON.parse(w.files.get(`${DIR}/light-${SID}.json`)!).consumedAt).toEqual(expect.any(String))
+    const settled = JSON.parse(w.files.get(`${DIR}/light-${SID}.json`)!)
+    expect(settled.consumedAt).toEqual(expect.any(String))
+    expect(settled.doneAt).toEqual(expect.any(String))
+    expect(settled.failedAt).toBeUndefined()
     expect(w.forks).toHaveLength(1)
-    const prompt = w.forks[0]
+    const prompt = w.forks[0]!
     expect(prompt.startsWith('RULES')).toBe(true)
     expect(prompt).toContain('git diff abc1234 -- <touched files>')
     expect(prompt).toContain('+new')
@@ -140,7 +149,7 @@ describe('turn.complete picks up the request', () => {
     const saved = [...w.files.keys()].find(k => k.startsWith('/fake/analyses/sess-1-'))
     expect(saved).toMatch(/\/sess-1-\d{8}T\d{6}Z\.md$/)
     expect(w.files.get(saved!)!.startsWith('### Goals')).toBe(true)
-    expect(w.store.get('seen')).toEqual(['Run the new test'])
+    expect(w.store.get(`seen:${SID}`)).toMatchObject({ titles: ['Run the new test'] })
 
     const ui = await band($)
     expect((await ui.find({ key: 'send' }))).toBeDefined()
@@ -159,11 +168,13 @@ describe('turn.complete picks up the request', () => {
 
   test('the seen and not-useful titles reach the prompt', ON, async ($: Engine, on: On) => {
     const w = world(on, { files: withRequest() })
-    w.store.set('seen', ['Old finding'])
+    w.store.set(`seen:${SID}`, { titles: ['Old finding'], at: Date.now() })
+    w.store.set('seen:other', { titles: ['Other session finding'], at: Date.now() })
     w.store.set('known', ['Ignored finding'])
     await $.turn.complete(turnEnd())
     await w.checked
     expect(w.forks[0]).toContain('## Already reported\n- Old finding')
+    expect(w.forks[0]).not.toContain('Other session finding')
     expect(w.forks[0]).toContain('## The user marked these not useful\n- Ignored finding')
   })
 
@@ -180,7 +191,7 @@ describe('turn.complete picks up the request', () => {
     await $.turn.complete(turnEnd())
     await w.checked
     expect(w.forks[0]).toContain('[diff cut at 20480 bytes')
-    expect(w.forks[0].length).toBeLessThan(25_000)
+    expect(w.forks[0]!.length).toBeLessThan(25_000)
   })
 
   for (const [name, files, extra] of [
@@ -195,6 +206,43 @@ describe('turn.complete picks up the request', () => {
       expect(w.forks).toHaveLength(0)
     })
   }
+
+  test('a failed fork marks the request failed, so the Stop hook falls back', ON, async ($: Engine, on: On) => {
+    const w = world(on, { files: withRequest(), forkFails: 'api-error' })
+    await $.turn.complete(turnEnd())
+    await w.checked
+    const settled = JSON.parse(w.files.get(`${DIR}/light-${SID}.json`)!)
+    expect(settled).toMatchObject({ failedAt: expect.any(String), failure: 'api-error' })
+    expect(settled.doneAt).toBeUndefined()
+    expect([...w.files.keys()].some(k => k.startsWith('/fake/analyses/'))).toBe(false)
+  })
+
+  test('a request replaced during the fork is not marked', ON, async ($: Engine, on: On) => {
+    const w = world(on, {
+      files: withRequest(),
+      reply: CLEAN,
+      duringFork: files => files.set(`${DIR}/light-${SID}.json`, JSON.stringify({ ...REQUEST, createdAt: '2026-10-14T00:10:00Z' })),
+    })
+    await $.turn.complete(turnEnd())
+    await w.checked
+    const newer = JSON.parse(w.files.get(`${DIR}/light-${SID}.json`)!)
+    expect(newer.createdAt).toBe('2026-10-14T00:10:00Z')
+    expect(newer.doneAt).toBeUndefined()
+  })
+
+  test('headless: the turn end waits for the review', ON, async ($: Engine, on: On) => {
+    const w = world(on, { files: withRequest(), reply: CLEAN, surfaces: [] })
+    await $.turn.complete(turnEnd())
+    // No `await w.checked`: the review has landed by the time the turn ends.
+    expect(w.files.get(LOG)).toContain('"outcome":"clean"')
+  })
+
+  test('new files inside a new directory are listed one by one', ON, async ($: Engine, on: On) => {
+    const w = world(on, { files: withRequest() })
+    await $.turn.complete(turnEnd())
+    await w.checked
+    expect(w.gitCalls).toContainEqual(['git', 'status', '--short', '--untracked-files=all'])
+  })
 
   test('light mode off: a request is left alone', async ($: Engine, on: On) => {
     const w = world(on, { files: withRequest() })
@@ -239,9 +287,30 @@ describe('band buttons', () => {
 describe('band scope', () => {
   test("another session's review is not shown here", ON, async ($: Engine, on: On) => {
     const w = world(on)
-    w.store.set('view', { sessionId: 'other', goals: 'g', titles: ['T'], body: 'b', file: null, shownAt: 0 })
+    w.store.set('view:other', { sessionId: 'other', goals: 'g', titles: ['T'], body: 'b', file: null, shownAt: Date.now() })
     const ui = await band($)
     expect(await ui.find({ key: 'send' })).toBeUndefined()
+  })
+
+  test("a review here leaves another session's band in place", ON, async ($: Engine, on: On) => {
+    const w = world(on, { files: withRequest() })
+    const other = { sessionId: 'other', goals: 'g', titles: ['T'], body: 'b', file: null, shownAt: Date.now() }
+    w.store.set('view:other', other)
+    await $.turn.complete(turnEnd())
+    await w.checked
+    await settle()
+    expect(w.store.get('view:other')).toEqual(other)
+    expect(w.store.get(`view:${SID}`)).toMatchObject({ titles: ['Run the new test'] })
+  })
+
+  test('session start drops keys of sessions a week gone', ON, async ($: Engine, on: On) => {
+    const w = world(on)
+    w.store.set('view:old', { sessionId: 'old', goals: '', titles: [], body: '', file: null, shownAt: 1 })
+    w.store.set('seen:old', { titles: ['T'], at: 1 })
+    w.store.set('seen:fresh', { titles: ['T'], at: Date.now() })
+    w.store.set('known', ['Ignored finding'])
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true } as never)
+    expect([...w.store.keys()].sort()).toEqual(['known', 'seen:fresh'])
   })
 })
 

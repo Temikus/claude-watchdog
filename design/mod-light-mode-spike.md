@@ -261,6 +261,17 @@ managed settings and for Team and Enterprise organizations". It keeps
 the Stop hook's output from a module does not work for managed or Enterprise
 users.
 
+### Re-check on 2.1.325 (2026-11-15)
+
+- **A fork left running past the turn's end never returns in `-p`.** Shutdown
+  starts with `turn.complete`, and the `session.end` wait ran out its 9 s with
+  no reply, on Haiku and on Sonnet. Awaited inside `turn.complete` the same
+  fork answers in 2.0 s. The module now awaits it when `$.session.surfaces()`
+  is empty, and the `session.end` wait is gone.
+- **`Engine` moved to `claude-code/testing`.** A hook's `$` is typed
+  `EngineInterface`.
+- **Still not verified:** the band in an interactive session.
+
 ## Decisions (2026-10-14)
 
 - **D1:** ship inside `claude-watchdog`, as an opt-in config option.

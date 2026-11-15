@@ -229,8 +229,14 @@ Every review is still saved to the analyses directory.
   diff for it, capped at 20 KB.
 - When the module is not running (for example, an older Claude Code, or a
   failed load), the Stop hook falls back to the analyzer.
+- When a light review fails or never finishes, the next Stop has the analyzer
+  review that slice instead, so no work goes unreviewed.
+- Each session keeps its own band and its own list of reported findings.
+  Findings marked not useful are remembered across sessions.
+- In a `claude -p` run the turn's end waits for the review, because a headless
+  session exits before a background fork can answer.
 - `both` runs light mode and the analyzer side by side, for comparing them.
-- Needs a Claude Code build with plugin hooks modules (tested on 2.1.296).
+- Needs a Claude Code build with plugin hooks modules (tested on 2.1.325).
 - **Hold input** has nothing to hold in `on` mode, since Claude is never
   blocked.
 - First-party API only for now: on Bedrock, Vertex or Foundry the analyzer runs

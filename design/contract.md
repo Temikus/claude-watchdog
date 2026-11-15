@@ -538,7 +538,7 @@ both prefixes.
 | Name | Written by | Contents |
 | --- | --- | --- |
 | `alive-<session_id>` | the module, at session start and every turn start | `{"ts": <iso>}`. The Stop hook hands off only while its mtime is under 2 h old |
-| `light-<session_id>.json` | the Stop hook, written to `.tmp` then renamed | `{version: 1, sessionId, projectRoot, cwd, commitRange, touchedFiles, externalFiles, attribution, previousAnalysis, isContinuation, analysesDir, createdAt}`. The module adds `consumedAt` when it picks the request up, before it forks |
+| `light-<session_id>.json` | the Stop hook, written to `.tmp` then renamed | `{version: 1, sessionId, projectRoot, cwd, commitRange, touchedFiles, externalFiles, attribution, isContinuation, analysesDir, prevCursor, handoff, createdAt}`. `prevCursor` is the cursor file's text before the handoff (null if there was none) and `handoff` is `module` or `both`. The module adds `consumedAt` when it picks the request up, then `doneAt` once the review has landed, or `failedAt` and `failure` when the fork gave no answer. It adds nothing to a request that was replaced meanwhile (a different `createdAt`) |
 | `raw-<session_id>.txt` | file | **Never written by the current code.** See below |
 | `echo-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Echo sentinel |
 | `pending-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Input-hold sentinel |
@@ -709,7 +709,9 @@ The complete set, per hook.
 | `LIGHT: handed to the module` | Light mode `on`: request written, no brief emitted, exit 0 |
 | `LIGHT: handed to the module, analyzer runs too` | Light mode `both` |
 | `LIGHT: no live module marker for this session, using the analyzer` | Light mode on, but `alive-<sid>` is missing or older than 2 h |
-| `LIGHT: previous request was never consumed, using the analyzer` | An unconsumed `light-<sid>.json` older than 120 s |
+| `LIGHT: previous review <why>, the analyzer re-reviews its slice` | A `module` request with no `doneAt` that carries `failedAt`, or is older than 120 s. `<why>` is `failed (<failure>)`, `never finished` or `was never picked up`. The cursor is put back to `prevCursor` with its mtime zeroed (so the cooldown passes), the request is deleted, and this Stop uses the analyzer |
+| `LIGHT: previous review <why>, using the analyzer` | The same, for a request with no `prevCursor` field: nothing to put back |
+| `TRIGGER: handing the review to the light-mode module` | Light mode `on`, in place of the `TRIGGER: injecting ...` line. No `brief file:` line follows |
 | `LIGHT: request write failed (<message>), using the analyzer` | The request could not be written |
 | `ERROR: unexpected failure: <message>` | Any uncaught exception |
 

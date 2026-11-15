@@ -1,4 +1,4 @@
-import type { Engine, Register } from 'claude-code'
+import type { EngineInterface as Engine, Register } from 'claude-code'
 
 // The Stop hook (session-analysis.mjs) keeps every gate. This module only
 // marks itself alive, picks up the request the Stop hook leaves, forks the
@@ -16,20 +16,43 @@ type LightView = {
   shownAt: number
 }
 
-async function setView($: Engine, value: LightView | null): Promise<void> {
-  await $.store.set('view', value)
+// Titles already reported in one session, so a later review does not repeat them.
+type Seen = { titles: string[]; at: number }
+
+// $.store is shared by every session. The band and the reported titles live
+// under the session's own keys, so sessions open side by side cannot overwrite
+// each other. `known` stays shared: "not useful" is about the finding.
+const viewKey = (sessionId: string) => `view:${sessionId}`
+const seenKey = (sessionId: string) => `seen:${sessionId}`
+const STORE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+async function setView($: Engine, sessionId: string, value: LightView | null): Promise<void> {
+  if (value) await $.store.set(viewKey(sessionId), value)
+  else await $.store.delete(viewKey(sessionId))
   $.ui.invalidate('ui.render')
 }
 
-// The store is shared by every session, so only this session's review shows.
 async function currentView($: Engine): Promise<LightView | null> {
-  const v = (await $.store.get('view')) as LightView | null | undefined
-  return v && v.sessionId === (await $.session.id()) ? v : null
+  return ((await $.store.get(viewKey(await $.session.id()))) as LightView | null | undefined) ?? null
+}
+
+async function seenTitles($: Engine, sessionId: string): Promise<string[]> {
+  return strings(((await $.store.get(seenKey(sessionId))) as Seen | undefined)?.titles)
+}
+
+// Ended sessions leave their keys behind, and nothing else removes them.
+async function pruneStore($: Engine): Promise<void> {
+  const cutoff = Date.now() - STORE_TTL_MS
+  for (const key of await $.store.keys()) {
+    if (!key.startsWith('view:') && !key.startsWith('seen:')) continue
+    const v = (await $.store.get(key)) as Partial<LightView & Seen> | undefined
+    if ((v?.shownAt ?? v?.at ?? 0) < cutoff) await $.store.delete(key)
+  }
 }
 
 const DIFF_CAP_BYTES = 20 * 1024
 const SEEN_CAP = 50
-const SESSION_END_WAIT_MS = 30_000
+const LOG_MAX_LINES = 500
 
 type Request = {
   version: number
@@ -40,11 +63,14 @@ type Request = {
   touchedFiles: string[]
   externalFiles: string[]
   attribution: string | null
-  previousAnalysis: string | null
   isContinuation: boolean
   analysesDir: string
   createdAt: string
+  // Added by this module: picked up, reviewed, or given up on.
   consumedAt?: string
+  doneAt?: string
+  failedAt?: string
+  failure?: string
 }
 
 // Must match LIGHT_DIR in session-analysis.mjs.
@@ -58,12 +84,13 @@ async function logFile($: Engine): Promise<string> {
     ?? `${await $.env.get('HOME')}/.claude/logs/claude-watchdog-light.jsonl`
 }
 
-// fs has no append. Read-modify-write can drop a line if two writes overlap;
-// at one check per turn that is acceptable.
+// fs has no append, so each line rewrites the file, kept to its newest lines.
+// Two overlapping writes can drop a line; at one check per turn that is fine.
 async function logLine($: Engine, line: object): Promise<void> {
   const path = await logFile($)
-  const prior = await $.fs.read(path).catch(() => '')
-  await $.fs.write(path, `${prior}${JSON.stringify({ ts: new Date().toISOString(), ...line })}\n`)
+  const prior = String(await $.fs.read(path).catch(() => '')).split('\n').filter(Boolean)
+  const lines = [...prior, JSON.stringify({ ts: new Date().toISOString(), ...line })].slice(-LOG_MAX_LINES)
+  await $.fs.write(path, `${lines.join('\n')}\n`)
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
@@ -95,7 +122,7 @@ export async function evidence($: Engine, req: Request): Promise<string> {
   if (!cwd) return 'No git repository: judge from the conversation alone.'
   const base = req.commitRange ?? 'HEAD'
   const paths = req.touchedFiles.length ? ['--', ...req.touchedFiles] : []
-  const status = await git($, cwd, ['status', '--short'])
+  const status = await git($, cwd, ['status', '--short', '--untracked-files=all'])
   const stat = await git($, cwd, ['diff', '--stat', base])
   let hunks = await git($, cwd, ['diff', base, ...paths])
   for (const line of status.split('\n')) {
@@ -143,8 +170,8 @@ export function parse(text: string): Parsed {
   const first = lines[0]?.trim().toLowerCase() ?? ''
   const hasVerdict = first.startsWith('verdict:')
   const body = (hasVerdict ? lines.slice(1) : lines).join('\n').trim()
-  const titles = [...body.matchAll(/^\s*(?:[-*]\s*)?\*\*(.+?)\*\*\s*\[(?:code|instruction|process)\]/gim)].map(m => m[1].trim())
-  const goals = /###\s*Goals\s*\n([\s\S]*?)(?=\n###|$)/.exec(body)?.[1].trim() ?? ''
+  const titles = [...body.matchAll(/^\s*(?:[-*]\s*)?\*\*(.+?)\*\*\s*\[(?:code|instruction|process)\]/gim)].map(m => (m[1] ?? '').trim())
+  const goals = /###\s*Goals\s*\n([\s\S]*?)(?=\n###|$)/.exec(body)?.[1]?.trim() ?? ''
   const hasSections = /^###\s*(Efficiency|Quality|Compliance)\b/m.test(body)
   const isClean = hasVerdict
     ? first.replace(/^verdict:\s*/, '').startsWith('clean')
@@ -161,41 +188,57 @@ async function readRequest($: Engine, path: string): Promise<Request | null> {
   }
 }
 
+// Records the outcome on the request, which the Stop hook reads at the next
+// Stop. Skipped when a newer request has replaced this one meanwhile.
+async function settleRequest($: Engine, path: string, req: Request, patch: Partial<Request>): Promise<void> {
+  const now = await readRequest($, path)
+  if (now?.createdAt !== req.createdAt) return
+  await $.fs.write(path, `${JSON.stringify({ ...now, ...patch })}\n`)
+}
+
 async function check($: Engine, sessionId: string): Promise<void> {
   const path = `${await lightDir($)}/light-${sessionId}.json`
   const req = await readRequest($, path)
   if (!req || req.consumedAt) return
-  // Marked before the fork, so the Stop hook never falls back for a request
-  // this module already holds.
+  // Marked before the fork, so a second turn end does not start a second review.
   await $.fs.write(path, `${JSON.stringify({ ...req, consumedAt: new Date().toISOString() })}\n`)
+  // A request marked failed makes the Stop hook hand the slice to the analyzer.
+  const fail = (failure: string) => settleRequest($, path, req, { failedAt: new Date().toISOString(), failure }).catch(() => {})
 
-  const seen = strings(await $.store.get('seen'))
-  const known = strings(await $.store.get('known'))
   const startedAt = Date.now()
-  const reply = await $.model.fork({ prompt: await buildPrompt($, req, seen, known) })
-  const usage = 'usage' in reply ? reply.usage : null
-  if (!reply.isAnswered) {
-    await logLine($, { kind: 'check', sessionId, outcome: reply.reason, latencyMs: Date.now() - startedAt, usage })
-    return
-  }
+  try {
+    const seen = await seenTitles($, sessionId)
+    const known = strings(await $.store.get('known'))
+    const reply = await $.model.fork({ prompt: await buildPrompt($, req, seen, known) })
+    const usage = 'usage' in reply ? reply.usage : null
+    if (!reply.isAnswered) {
+      await fail(reply.reason)
+      await logLine($, { kind: 'check', sessionId, outcome: reply.reason, latencyMs: Date.now() - startedAt, usage })
+      return
+    }
 
-  const parsed = parse(reply.text)
-  const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
-  const file = `${req.analysesDir}/${sessionId}-${ts}.md`
-  const saved = await $.fs.write(file, `${parsed.body}\n`).then(() => file, () => null)
-  if (parsed.isClean) {
-    $.ui.toast('✓ Watchdog: nothing to report')
-  } else {
-    await $.store.set('seen', [...seen, ...parsed.titles].slice(-SEEN_CAP))
-    await setView($, {
-      sessionId, goals: parsed.goals, titles: parsed.titles, body: parsed.body, file: saved, shownAt: Date.now(),
+    const parsed = parse(reply.text)
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+    const file = `${req.analysesDir}/${sessionId}-${ts}.md`
+    const saved = await $.fs.write(file, `${parsed.body}\n`).then(() => file, () => null)
+    if (parsed.isClean) {
+      $.ui.toast('✓ Watchdog: nothing to report')
+    } else {
+      await $.store.set(seenKey(sessionId), { titles: [...seen, ...parsed.titles].slice(-SEEN_CAP), at: Date.now() } satisfies Seen)
+      await setView($, sessionId, {
+        sessionId, goals: parsed.goals, titles: parsed.titles, body: parsed.body, file: saved, shownAt: Date.now(),
+      })
+    }
+    await settleRequest($, path, req, { doneAt: new Date().toISOString() })
+    // Last, so a reader of the log knows the check has fully landed.
+    await logLine($, {
+      kind: 'check', sessionId, outcome: parsed.isClean ? 'clean' : 'findings',
+      latencyMs: Date.now() - startedAt, usage, titles: parsed.titles, file: saved,
     })
+  } catch (err) {
+    await fail(String(err))
+    throw err
   }
-  // Last, so a reader of the log knows the check has fully landed.
-  await logLine($, {
-    kind: 'check', sessionId, outcome: parsed.isClean ? 'clean' : 'findings',
-    latencyMs: Date.now() - startedAt, usage, titles: parsed.titles, file: saved,
-  })
 }
 
 // The Stop hook hands a review over only while this marker is fresh.
@@ -211,7 +254,7 @@ async function answer($: Engine, current: LightView, kind: 'sent' | 'not_useful'
   } else if (kind === 'not_useful') {
     await $.store.set('known', [...strings(await $.store.get('known')), ...current.titles].slice(-SEEN_CAP))
   }
-  await setView($, null)
+  await setView($, current.sessionId, null)
   await logLine($, { kind: 'answer', sessionId: current.sessionId, answer: kind, msToAnswer: Date.now() - current.shownAt })
 }
 
@@ -221,6 +264,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await markAlive($, options.light_mode).catch(() => {})
+    await pruneStore($).catch(() => {})
     return started
   })
 
@@ -236,22 +280,15 @@ export const register: Register = (on, options) => {
     if (m !== 'on' && m !== 'both') return result
     const sessionId = await $.session.id()
     if (running.has(sessionId)) return result
-    // Not awaited: the turn's end must not wait on a model call.
     const job = check($, sessionId)
       .catch(err => logLine($, { kind: 'error', sessionId, error: String(err) }).catch(() => {}))
       .finally(() => running.delete(sessionId))
     running.set(sessionId, job)
+    // A `-p` run shuts down as soon as its turn ends, and a fork still in flight
+    // then never returns. Nobody is waiting at a prompt there, so hold the turn's
+    // end for the review. Anywhere else it must not wait on a model call.
+    if ((await $.session.surfaces()).length === 0) await job
     return result
-  })
-
-  // A headless run (`claude -p`) ends right after its last turn, which would
-  // drop the review mid-fork. Wait for it, within the hook's budget.
-  on('session.end', async ($, e, next) => {
-    if (running.size > 0) {
-      const ms = Math.max(0, Math.min(SESSION_END_WAIT_MS, next.budget.remainingMs - 1000))
-      await Promise.race([Promise.allSettled([...running.values()]), $.clock.sleep(ms)])
-    }
-    return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

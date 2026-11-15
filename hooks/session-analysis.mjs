@@ -438,9 +438,10 @@ function writeBrief(file, instruction, label) {
 }
 
 // 'off', 'module' (hand off, no brief), 'both' (hand off and brief), or
-// 'fallback' (light mode is on but no module can take the request).
-function lightDecision(sessionId) {
+// 'fallback' (light mode is on but the analyzer has to take this review).
+function lightDecision(sessionId, recovered) {
   if (LIGHT_MODE === 'off') return 'off';
+  if (recovered) return 'fallback';
   const fresh = (file, maxMs) => {
     try { return Date.now() - statSync(file).mtimeMs <= maxMs; } catch { return false; }
   };
@@ -448,16 +449,42 @@ function lightDecision(sessionId) {
     log('LIGHT: no live module marker for this session, using the analyzer');
     return 'fallback';
   }
-  const prior = join(LIGHT_DIR, `light-${sessionId}.json`);
-  if (existsSync(prior) && !fresh(prior, LIGHT_UNCONSUMED_MAX_MS)) {
-    let consumed = false;
-    try { consumed = Boolean(JSON.parse(readFileSync(prior, 'utf8')).consumedAt); } catch { /* unreadable: treat as unconsumed */ }
-    if (!consumed) {
-      log('LIGHT: previous request was never consumed, using the analyzer');
-      return 'fallback';
-    }
-  }
   return LIGHT_MODE === 'both' ? 'both' : 'module';
+}
+
+// The handoff advances the cursor before the module has reviewed anything. A
+// request the module failed, or left unfinished past LIGHT_UNCONSUMED_MAX_MS,
+// is a slice nobody reviewed: put the cursor back so the analyzer covers it.
+// True when it did. Runs before the cursor is read.
+function recoverLightSlice(sessionId, cursorFile) {
+  if (LIGHT_MODE === 'off') return false;
+  const prior = join(LIGHT_DIR, `light-${sessionId}.json`);
+  let req, ageMs;
+  try {
+    ageMs = Date.now() - statSync(prior).mtimeMs;
+    req = JSON.parse(readFileSync(prior, 'utf8'));
+  } catch { return false; }
+  // In 'both' the analyzer reviewed the slice whatever the module did.
+  if (req.doneAt || req.handoff === 'both') return false;
+  if (!req.failedAt && ageMs <= LIGHT_UNCONSUMED_MAX_MS) return false;
+  try { unlinkSync(prior); } catch { /* recover again next Stop */ }
+  const why = req.failedAt ? `failed (${String(req.failure ?? 'unknown').replace(/\s+/g, ' ').slice(0, 80)})`
+    : req.consumedAt ? 'never finished' : 'was never picked up';
+  if (!('prevCursor' in req)) {
+    log(`LIGHT: previous review ${why}, using the analyzer`);
+    return true;
+  }
+  try {
+    if (typeof req.prevCursor === 'string' && req.prevCursor) {
+      writeFileSync(cursorFile, req.prevCursor);
+      // The cooldown reads this mtime, and the review it guards never ran.
+      utimesSync(cursorFile, 0, 0);
+    } else {
+      unlinkSync(cursorFile);
+    }
+  } catch { /* no cursor to put back: the analyzer reviews what it can */ }
+  log(`LIGHT: previous review ${why}, the analyzer re-reviews its slice`);
+  return true;
 }
 
 // Written to a temp name and renamed, so the module never reads half a file.
@@ -717,8 +744,13 @@ try {
   // Absent from cursors written before line 4 existed.
   let baseSha = '';
 
+  const lightRecovered = recoverLightSlice(sessionId, CURSOR_FILE);
+  // Handed to the light module so a failed review can be undone.
+  let prevCursorRaw = null;
+
   if (existsSync(CURSOR_FILE)) {
-    const cursorLines = readFileSync(CURSOR_FILE, 'utf8').split('\n');
+    prevCursorRaw = readFileSync(CURSOR_FILE, 'utf8');
+    const cursorLines = prevCursorRaw.split('\n');
     const rawUuid = cursorLines[0] || '';
     const rawLinenum = cursorLines[1] || '';
     const cursorTranscript = cursorLines[2] || '';
@@ -821,7 +853,10 @@ try {
   log(`condensed file: ${CONDENSED_FILE} (${condensedSize} bytes)`);
 
   const mode = outputMode();
-  log(`TRIGGER: injecting session-analyzer subagent request (mode=${mode})`);
+  let light = lightDecision(sessionId, lightRecovered);
+  log(light === 'module'
+    ? 'TRIGGER: handing the review to the light-mode module'
+    : `TRIGGER: injecting session-analyzer subagent request (mode=${mode})`);
 
   const safeCwd = (hookCwd || '').replace(/\n/g, '');
   const safeCondensed = CONDENSED_FILE.replace(/\n/g, '');
@@ -934,9 +969,6 @@ Use the Agent tool with:
 
 ${postAnalysis}`;
 
-  const visible = writeBrief(join(SESSIONS_DIR, `brief-${sessionId}.md`), instruction, 'Watchdog is running checks…');
-
-  let light = lightDecision(sessionId);
   if (light === 'module' || light === 'both') {
     const handed = writeLightRequest(sessionId, {
       version: 1,
@@ -947,13 +979,18 @@ ${postAnalysis}`;
       touchedFiles: stats.files,
       externalFiles: stats.external,
       attribution: attribution || null,
-      previousAnalysis: prevAnalysis || null,
       isContinuation: hadCursor,
       analysesDir: ANALYSES_DIR,
+      prevCursor: prevCursorRaw,
+      handoff: light,
       createdAt: new Date().toISOString(),
     });
     if (!handed) light = 'fallback';
   }
+
+  const visible = light === 'module'
+    ? ''
+    : writeBrief(join(SESSIONS_DIR, `brief-${sessionId}.md`), instruction, 'Watchdog is running checks…');
 
   const cursorResult = lastUuid(DELTA_FILE);
   if (cursorResult) {
