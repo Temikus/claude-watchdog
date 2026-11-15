@@ -477,8 +477,10 @@ function recoverLightSlice(sessionId, cursorFile) {
   try {
     if (typeof req.prevCursor === 'string' && req.prevCursor) {
       writeFileSync(cursorFile, req.prevCursor);
-      // The cooldown reads this mtime, and the review it guards never ran.
-      utimesSync(cursorFile, 0, 0);
+      // The cooldown reads this mtime, and the review it guards never ran. Just
+      // past the cooldown, not zero: the sweep deletes cursors older than the TTL.
+      const past = new Date(Date.now() - (COOLDOWN_SECONDS + 1) * 1000);
+      utimesSync(cursorFile, past, past);
     } else {
       unlinkSync(cursorFile);
     }

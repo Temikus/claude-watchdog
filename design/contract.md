@@ -709,7 +709,7 @@ The complete set, per hook.
 | `LIGHT: handed to the module` | Light mode `on`: request written, no brief emitted, exit 0 |
 | `LIGHT: handed to the module, analyzer runs too` | Light mode `both` |
 | `LIGHT: no live module marker for this session, using the analyzer` | Light mode on, but `alive-<sid>` is missing or older than 2 h |
-| `LIGHT: previous review <why>, the analyzer re-reviews its slice` | A `module` request with no `doneAt` that carries `failedAt`, or is older than 120 s. `<why>` is `failed (<failure>)`, `never finished` or `was never picked up`. The cursor is put back to `prevCursor` with its mtime zeroed (so the cooldown passes), the request is deleted, and this Stop uses the analyzer |
+| `LIGHT: previous review <why>, the analyzer re-reviews its slice` | A `module` request with no `doneAt` that carries `failedAt`, or is older than 120 s. `<why>` is `failed (<failure>)`, `never finished` or `was never picked up`. The cursor is put back to `prevCursor` with its mtime set just past the cooldown, the request is deleted, and this Stop uses the analyzer |
 | `LIGHT: previous review <why>, using the analyzer` | The same, for a request with no `prevCursor` field: nothing to put back |
 | `TRIGGER: handing the review to the light-mode module` | Light mode `on`, in place of the `TRIGGER: injecting ...` line. No `brief file:` line follows |
 | `LIGHT: request write failed (<message>), using the analyzer` | The request could not be written |

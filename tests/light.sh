@@ -157,6 +157,18 @@ assert_outcome "restore-recovered" BLOCK
 assert_log "restore-recovered" "CURSOR: uuid=a-LM-1 "
 pass "light-failed-review-restores-the-cursor-past-the-cooldown"
 
+# A recovery whose Stop then skips leaves a cursor the 7-day sweep will not take.
+sid=$(new_sid)
+alive "$sid"
+printf 'a-LM-1\n2\n%s\n\n' "$TRANSCRIPT" > "$LSESSIONS/cursor-$sid.txt"
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on CLAUDE_WATCHDOG_MIN_TOOL_USES=1
+mark "$sid" '. + {consumedAt: "2026-01-01T00:00:00Z", failedAt: "2026-01-01T00:00:02Z", failure: "api-error"}'
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on CLAUDE_WATCHDOG_MIN_TOOL_USES=99
+assert_outcome "restore-then-skip" SKIP
+light_run "$sid" CLAUDE_WATCHDOG_LIGHT_MODE=on CLAUDE_WATCHDOG_MIN_TOOL_USES=99
+[ "$(sed -n '1p' "$LSESSIONS/cursor-$sid.txt" 2>/dev/null)" = "a-LM-1" ] || fail "restore-then-skip" "restored cursor was swept"
+pass "light-restored-cursor-survives-the-sweep"
+
 # Picked up but never finished (the session died mid-fork).
 sid=$(new_sid)
 alive "$sid"
