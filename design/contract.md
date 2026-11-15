@@ -753,7 +753,9 @@ Use the Agent tool with:
 
 Both the `cwd` and the condensed path have `\n` stripped before interpolation.
 
-`postAnalysis` always opens with the foreground rule, the clean rule (a clean
+`postAnalysis` always opens with the wait rule (the agent may finish in the
+background; the only reply allowed before it does is
+`⏳ Watchdog check running.`), the clean rule (a clean
 analysis is answered with `✓ Watchdog check successful - nothing to report.`
 instead of relayed), the verbatim rule for everything else, and the late finish
 notice rule (`✓ Watchdog check already reported.` if already presented,

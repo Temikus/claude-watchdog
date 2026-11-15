@@ -554,7 +554,11 @@ rm -f "$GANALYSES/${sid}-"*.md
 sid=$(new_sid)
 gate_run "$sid" "$sr_transcript" "$PROJ" ""
 assert_outcome "interactive-off" BLOCK
-assert_out "interactive-off" "Run the agent in the FOREGROUND"
+# The Agent tool backgrounds every subagent on current Claude Code, so the brief
+# must not ask for a foreground run it cannot get (#67).
+refute_out "interactive-off" "FOREGROUND"
+assert_out "interactive-off" "⏳ Watchdog check running."
+assert_out "interactive-off" "Do not say how the agent is running"
 assert_out "interactive-off" "present the analysis verbatim and in full"
 assert_out "interactive-off" "✓ Watchdog check successful - nothing to report."
 assert_out "interactive-off" "after you have already presented"
@@ -567,9 +571,9 @@ pass "interactive-recommendations-off-by-default"
 sid=$(new_sid)
 gate_run "$sid" "$sr_transcript" "$PROJ" "" CLAUDE_WATCHDOG_INTERACTIVE_RECOMMENDATIONS=1
 assert_outcome "interactive-on" BLOCK
-# The foreground / clean / verbatim / do-not-act rules hold on both branches; only the
-# follow-up differs.
-assert_out "interactive-on" "Run the agent in the FOREGROUND"
+# The wait / clean / verbatim rules hold on both branches; only the follow-up differs.
+refute_out "interactive-on" "FOREGROUND"
+assert_out "interactive-on" "⏳ Watchdog check running."
 assert_out "interactive-on" "present the analysis verbatim and in full"
 assert_out "interactive-on" "✓ Watchdog check successful - nothing to report."
 assert_out "interactive-on" "after you have already presented"
@@ -592,7 +596,7 @@ gate_run "$sid" "$sr_transcript" "$PROJ" "" CLAUDE_WATCHDOG_FIX_RECOMMENDATIONS=
 assert_outcome "fix-on" BLOCK
 assert_out "fix-on" "present the analysis verbatim and in full"
 assert_out "fix-on" "✓ Watchdog check successful - nothing to report."
-assert_out "fix-on" "apply them in this turn, after the analysis has been presented in full"
+assert_out "fix-on" "apply them once the analysis has been presented in full"
 assert_out "fix-on" "do not write it to CLAUDE.md or any rules file"
 assert_out "fix-on" "Do not commit or push the fixes"
 refute_out "fix-on" "Do not act on any recommendation unless the user asks"
