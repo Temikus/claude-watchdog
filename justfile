@@ -118,7 +118,13 @@ release segment="patch": check
     #!/usr/bin/env bash
     set -euo pipefail
     manifest=".claude-plugin/plugin.json"
-    latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if [[ "$branch" != "main" ]]; then echo "error: release from main, not '$branch'"; exit 1; fi
+    # Take the newest tag repo-wide: `git describe` misses tags made on
+    # branches that were later squash-merged, and reissues their version.
+    git fetch --tags --quiet origin
+    latest=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)
+    latest=${latest:-v0.0.0}
     IFS='.' read -r major minor patch <<< "${latest#v}"
     case "{{ segment }}" in
       major) major=$((major + 1)); minor=0; patch=0 ;;
@@ -128,6 +134,10 @@ release segment="patch": check
     esac
     new="v${major}.${minor}.${patch}"
     bare="${new#v}"
+    if git rev-parse -q --verify "refs/tags/${new}" >/dev/null \
+      || git ls-remote --exit-code --tags origin "refs/tags/${new}" >/dev/null; then
+      echo "error: tag ${new} already exists"; exit 1
+    fi
     jq --arg v "$bare" '.version = $v' "$manifest" > "${manifest}.tmp" && mv "${manifest}.tmp" "$manifest"
     git add "$manifest"
     git commit -m "release: bump version to ${bare}"
