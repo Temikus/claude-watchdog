@@ -76,10 +76,8 @@ session end is noticeable friction.
 
 ### Input-hold follow-ups (from the 2026-07-03 hold_input_during_analysis work)
 
-- **Foreground nudge:** append "run the analyzer in the foreground — do not
-  background it" to the Stop-hook instruction in `session-analysis.mjs`.
-  Best-effort (the harness classifier may background anyway) but attacks the
-  root cause of the input-clash the hold option mitigates.
+- ~~**Foreground nudge**~~ - dropped. Current Claude Code backgrounds every
+  subagent, so the brief now plans for a background run instead (#67).
 - **Shared `common.mjs`:** the WATCHDOG_TMP / `cfg()` / `log()` boilerplate is
   now duplicated across three hook scripts (`session-analysis.mjs`,
   `persist-analysis.mjs`, `hold-input.mjs`). Fold into the unhack.md refactor.

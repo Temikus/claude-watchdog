@@ -10,7 +10,7 @@ Files touched outside the project root (not part of the slice diff): /repo/MAINT
 User instruction files (read only when a compliance question actually arises): <TMP>/proj/CLAUDE.md, <TMP>/home/.claude/rules/a-rules.md
 Provide your critical analysis."
 
-Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
+The agent may return in this turn, or keep running and send a notice when it finishes. If it has not returned, reply with exactly "⏳ Watchdog check running." and nothing else, then apply the rules below to the analysis in the notice. Do not say how the agent is running and do not start other work while you wait.
 
 If the analysis has no Efficiency, Quality, or Compliance section and its Recommendations section is "none", it is clean: reply with exactly "✓ Watchdog check successful - nothing to report." and nothing else. Otherwise, present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
 

@@ -776,13 +776,11 @@ try {
   const isInteractive = INTERACTIVE_RECS === '1' || INTERACTIVE_RECS === 'true';
   const safeTodoPath = join(safeCwd, '.claude/watchdog-todo.md').replace(/\n/g, '');
 
-  // Backgrounding the analyzer produced a relay that compressed the review to a
-  // third of its length, and twice skipped presenting it and acted on a finding
-  // instead. Both branches carry the same foreground/verbatim rule. A clean
-  // analysis is already persisted, so relaying it in full only adds noise. The
-  // agent can still end up backgrounded; its finish notice must then present the
-  // analysis, not drop it.
-  const foreground = `Run the agent in the FOREGROUND and wait for it to return before you reply. Do not background it and do not answer with a promise to report back later.
+  // Current Claude Code backgrounds every subagent, and asking for a foreground
+  // run only got a complaint about it (#67), so the wait gets one fixed line.
+  // Verbatim, because relays used to compress the review or act on a finding
+  // unpresented. A clean analysis is already persisted, so it is not relayed.
+  const relay = `The agent may return in this turn, or keep running and send a notice when it finishes. If it has not returned, reply with exactly "⏳ Watchdog check running." and nothing else, then apply the rules below to the analysis in the notice. Do not say how the agent is running and do not start other work while you wait.
 
 If the analysis has no Efficiency, Quality, or Compliance section and its Recommendations section is "none", it is clean: reply with exactly "✓ Watchdog check successful - nothing to report." and nothing else. Otherwise, present the analysis verbatim and in full - do not summarise, shorten, reorder, or reformat it.
 
@@ -804,7 +802,7 @@ Do not commit or push the fixes. Finish with one line per recommendation: applie
 
   let postAnalysis;
   if (isInteractive && isFix) {
-    postAnalysis = `${foreground}
+    postAnalysis = `${relay}
 
 ${askBlock}
 
@@ -813,7 +811,7 @@ ${fixRules}
 
 Do not act on any recommendation the user does not select. Then stop.`;
   } else if (isInteractive) {
-    postAnalysis = `${foreground}
+    postAnalysis = `${relay}
 
 ${askBlock}
 
@@ -821,14 +819,14 @@ If the user selects any recommendations, save them as a markdown checklist to '$
 
 Do not act on any recommendation the user does not select. Then stop.`;
   } else if (isFix) {
-    postAnalysis = `${foreground}
+    postAnalysis = `${relay}
 
-If the analysis has recommendations, apply them in this turn, after the analysis has been presented in full:
+If the analysis has recommendations, apply them once the analysis has been presented in full:
 ${fixRules}
 
 Then stop.`;
   } else {
-    postAnalysis = `${foreground}
+    postAnalysis = `${relay}
 
 Do not act on any recommendation unless the user asks. Then stop.`;
   }
