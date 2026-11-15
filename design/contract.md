@@ -924,11 +924,25 @@ Decide it explicitly rather than discovering it in a golden-file diff.
 Dropped entirely, emitting no line.
 
 Top-level entry types (`NOISE_TYPES`):
-`last-prompt`, `custom-title`, `ai-title`, `pr-link`, `mode`.
+`last-prompt`, `custom-title`, `ai-title`, `pr-link`, `mode`, `api-request`,
+`api-request-blob`, `api-request-shape`, `bridge-session`, `session-owner`,
+`permission-mode`, `atis-latch`, `agent-name`, `frame-link`, `tools-used`,
+`cost-state`, `file-history-snapshot`, `file-history-delta`,
+`artifact-autoreact-ledger`, `artifact-comment-monitor`.
+
+`system` entries with these subtypes (`NOISE_SYSTEM_SUBTYPES`):
+`stop_hook_summary`, `turn_duration`. Every other `system` entry is emitted.
 
 Attachment types (`NOISE_ATTACHMENTS`):
 `task_reminder`, `deferred_tools_delta`, `agent_listing_delta`,
-`mcp_instructions_delta`, `skill_listing`.
+`mcp_instructions_delta`, `skill_listing`, `hook_success`, `environment`,
+`session_context`, `date`, `model`, `credential_org`, `instructions`,
+`prompt_snapshot`, `auto_mode`, `command_permissions`, `sandbox_instructions`,
+`remote_session_change`, `deferred_tools_record`, `total_tokens_reminder`,
+`silent_turn_reminder`, `thinking_drop`.
+
+`hook_non_blocking_error` and `hook_additional_context` are **not** in the set:
+a hook failure and what a hook told Claude are session content.
 
 Unknown types are deliberately **not** dropped: they fall through to a
 `SYSTEM[...]` line, so a future entry type carrying user text degrades to noisy
