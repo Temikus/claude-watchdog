@@ -1,5 +1,8 @@
 {
   "description": "claude-watchdog — trigger a critical session post-mortem on Stop.",
+  "modules": [
+    "./light-mode.tsx"
+  ],
   "hooks": {
     "Stop": [
       {

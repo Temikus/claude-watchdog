@@ -104,6 +104,17 @@
       "title": "Wake on bot reviews and CI",
       "description": "After Claude runs git push or gh pr create on a branch with an open PR, wait in the background until every status and check on the head settles, then wake Claude with failed checks and new bot review comments. Needs an authenticated gh CLI. At most 3 wake-ups per PR per session. Default is false",
       "default": false
+    },
+    "light_mode": {
+      "type": "string",
+      "title": "Light mode",
+      "description": "off: the analyzer subagent reviews the session (default). on: a tool-less fork of the conversation reviews it and shows the result above the prompt, without blocking Claude; falls back to the analyzer when the light-mode module is not loaded. both: run both, for comparison. First-party API only",
+      "options": [
+        "off",
+        "on",
+        "both"
+      ],
+      "default": "off"
     }
   }
 }

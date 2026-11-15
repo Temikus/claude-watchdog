@@ -285,6 +285,7 @@ Every other `cfg()` call site is **[UNTESTED]** for precedence.
 | Include rules | `CLAUDE_WATCHDOG_INCLUDE_RULES` | `CLAUDE_PLUGIN_OPTION_INCLUDE_RULES` | `1` | bool |
 | Verbose | `CLAUDE_WATCHDOG_VERBOSE` | `CLAUDE_PLUGIN_OPTION_VERBOSE` | `0` | bool |
 | Legacy exit-2 mode | `CLAUDE_WATCHDOG_LEGACY_HOOK` | `CLAUDE_PLUGIN_OPTION_legacy_hook` | `false` | see below |
+| Light mode | `CLAUDE_WATCHDOG_LIGHT_MODE` | `CLAUDE_PLUGIN_OPTION_LIGHT_MODE` | `off` | `off`, `on` or `both`; anything else is `off` plus `CONFIG: LIGHT_MODE='<v>' is not one of off, on, both, using off` |
 
 Note the three name mismatches between the two columns: `MAX_BYTES` against
 `MAX_TRANSCRIPT_BYTES`, `HOLD_INPUT` against `HOLD_INPUT_DURING_ANALYSIS`, and
@@ -528,6 +529,16 @@ All names below live in `SESSIONS_DIR` unless stated otherwise.
 | `condensed-<session_id>.txt` | file | The condensed transcript handed to the analyzer |
 | `brief-<session_id>.md` | file | The instruction Claude reads on trigger (section 7.3) |
 | `brief-selfcheck-<session_id>.md` | file | The self-check instruction (gate 9a) |
+
+Light mode keeps its files in `LIGHT_DIR` (`CLAUDE_WATCHDOG_LIGHT_DIR`, default
+`~/.claude/tmp/claude-watchdog/light`, mode 0700). The path is fixed because
+`hooks/light-mode.tsx` cannot see `CLAUDE_PLUGIN_DATA`. The 2-hour sweep covers
+both prefixes.
+
+| Name | Written by | Contents |
+| --- | --- | --- |
+| `alive-<session_id>` | the module, at session start and every turn start | `{"ts": <iso>}`. The Stop hook hands off only while its mtime is under 2 h old |
+| `light-<session_id>.json` | the Stop hook, written to `.tmp` then renamed | `{version: 1, sessionId, projectRoot, cwd, commitRange, touchedFiles, externalFiles, attribution, isContinuation, analysesDir, prevCursor, handoff, createdAt}`. `prevCursor` is the cursor file's text before the handoff (null if there was none) and `handoff` is `module` or `both`. The module adds `consumedAt` when it picks the request up, then `doneAt` once the review has landed, or `failedAt` and `failure` when the fork gave no answer. It adds nothing to a request that was replaced meanwhile (a different `createdAt`) |
 | `raw-<session_id>.txt` | file | **Never written by the current code.** See below |
 | `echo-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Echo sentinel |
 | `pending-<session_id>` | file, always in `GLOBAL_SESSIONS_DIR` | Input-hold sentinel |
@@ -695,6 +706,13 @@ The complete set, per hook.
 | `LOG ROTATED (was <n> lines)` | Rotation fired |
 | `tool_use count (delta): <n> (edits=<n> mutating_bash=<n> user_messages=<n>)` | Always, after the delta stats |
 | `condensed file: <path> (<n> bytes)` | On the trigger path |
+| `LIGHT: handed to the module` | Light mode `on`: request written, no brief emitted, exit 0 |
+| `LIGHT: handed to the module, analyzer runs too` | Light mode `both` |
+| `LIGHT: no live module marker for this session, using the analyzer` | Light mode on, but `alive-<sid>` is missing or older than 2 h |
+| `LIGHT: previous review <why>, the analyzer re-reviews its slice` | A `module` request with no `doneAt` that carries `failedAt`, or is older than 120 s. `<why>` is `failed (<failure>)`, `never finished` or `was never picked up`. The cursor is put back to `prevCursor` with its mtime set just past the cooldown, the request is deleted, and this Stop uses the analyzer |
+| `LIGHT: previous review <why>, using the analyzer` | The same, for a request with no `prevCursor` field: nothing to put back |
+| `TRIGGER: handing the review to the light-mode module` | Light mode `on`, in place of the `TRIGGER: injecting ...` line. No `brief file:` line follows |
+| `LIGHT: request write failed (<message>), using the analyzer` | The request could not be written |
 | `ERROR: unexpected failure: <message>` | Any uncaught exception |
 
 **Hold hook**, tagged `[hold]`: `RELEASE: hold expired for session=<sid> (<n>s >
@@ -829,6 +847,9 @@ Once gate 16 passes:
 9. Write the cursor from `lastUuid(DELTA_FILE)`, if the returned uuid matches
    `^[A-Za-z0-9_-]+$`. A `null` result leaves the cursor untouched with no log
    line at all.
+9a. Light mode (`on` or `both`, with a live module marker): write
+    `light-<sid>.json`. With `on`, log `LIGHT: handed to the module` and exit 0
+    here, with no echo sentinel, no pending sentinel and no output.
 10. Write the echo sentinel; write the pending sentinel when `HOLD_INPUT` is
     truthy.
 11. Emit the one-line status (legacy: stderr plus exit 2; otherwise stdout JSON
